@@ -1,0 +1,24 @@
+# ICScheck .gitignore
+
+# Reports (contain sensitive system data)
+*_Report_*.html
+*.log
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Internal planning docs (not for public)
+../START.md
+../PLAN.md
+../DECYZJE.md
+../*.md
+../STRONA/
+
+# Images (marketing)
+../logo.png
+../baner.png
