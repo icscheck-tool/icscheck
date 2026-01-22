@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICScheck Security Report - DEMO-SCADA-01</title>
+    <style>
+        :root {
+            --bg-primary: #0D1117;
+            --bg-secondary: #161B22;
+            --bg-tertiary: #21262D;
+            --text-primary: #E6EDF3;
+            --text-secondary: #8B949E;
+            --border: #30363D;
+            --green: #238636;
+            --red: #F85149;
+            --yellow: #D29922;
+            --blue: #58A6FF;
+        }
+        [data-theme="light"] {
+            --bg-primary: #FFFFFF;
+            --bg-secondary: #F6F8FA;
+            --bg-tertiary: #EAEEF2;
+            --text-primary: #1F2328;
+            --text-secondary: #656D76;
+            --border: #D0D7DE;
+            --green: #1A7F37;
+            --red: #CF222E;
+            --yellow: #9A6700;
+            --blue: #0969DA;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 40px;
+            transition: background 0.3s, color 0.3s;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            position: relative;
+        }
+        .header h1 { font-size: 32px; color: var(--green); margin-bottom: 10px; }
+        .header p { color: var(--text-secondary); }
+        .theme-toggle {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 16px;
+            cursor: pointer;
+            color: var(--text-primary);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.3s;
+        }
+        .theme-toggle:hover { background: var(--bg-tertiary); }
+        .theme-toggle svg { width: 18px; height: 18px; }
+        .system-info {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .system-info-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .system-info-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .system-info-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .system-info-value.wincc { color: var(--blue); }
+        .system-info-value.station-server { color: var(--green); }
+        .system-info-value.station-client { color: var(--yellow); }
+        .system-info-value.station-engineering { color: var(--blue); }
+        .system-info-value.project { color: var(--purple, #a855f7); font-weight: 600; }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: background 0.3s;
+        }
+        .summary-card.score { border-color: var(--green); }
+        .summary-card h2 { font-size: 32px; margin-bottom: 4px; }
+        .summary-card p { color: var(--text-secondary); font-size: 13px; }
+        .pass { color: var(--green); }
+        .fail { color: var(--red); }
+        .warn { color: var(--yellow); }
+        .info { color: var(--blue); }
+        .filter-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .filter-tab {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 8px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+        .filter-tab:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+        .filter-tab.active { background: var(--green); border-color: var(--green); color: white; }
+        .filter-tab.active-fail { background: var(--red); border-color: var(--red); color: white; }
+        .filter-tab.active-warn { background: var(--yellow); border-color: var(--yellow); color: white; }
+        .filter-tab .count {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 6px;
+            font-size: 12px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 40px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        th {
+            background: var(--bg-tertiary);
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        td {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background: var(--bg-tertiary); }
+        tr.hidden { display: none; }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status.pass { background: rgba(35, 134, 54, 0.2); color: var(--green); }
+        .status.fail { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+        .status.warn { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+        .status.info { background: rgba(88, 166, 255, 0.2); color: var(--blue); }
+        [data-theme="light"] .status.pass { background: rgba(26, 127, 55, 0.15); }
+        [data-theme="light"] .status.fail { background: rgba(207, 34, 46, 0.15); }
+        [data-theme="light"] .status.warn { background: rgba(154, 103, 0, 0.15); }
+        [data-theme="light"] .status.info { background: rgba(9, 105, 218, 0.15); }
+        .category-header {
+            background: var(--bg-tertiary) !important;
+            padding: 16px 24px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        .footer a { color: var(--green); text-decoration: none; }
+        .recommendation { font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+        .compliance-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 11px;
+            margin-right: 4px;
+            position: relative;
+            cursor: help;
+        }
+        .compliance-tag:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 100;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            margin-bottom: 4px;
+        }
+        .compliance-tag:hover::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: var(--border);
+            margin-bottom: -6px;
+            z-index: 101;
+        }
+        .category-desc {
+            font-weight: 400;
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin-left: 8px;
+        }
+        .demo-badge {
+            background: var(--yellow);
+            color: #000;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 12px;
+        }
+        @media (max-width: 768px) {
+            body { padding: 16px; }
+            .theme-toggle { position: static; margin-bottom: 16px; justify-content: center; }
+            .system-info { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <button class="theme-toggle" onclick="toggleTheme()">
+                <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <span class="theme-text">Light Mode</span>
+            </button>
+            <h1>ICScheck Security Report <span class="demo-badge">DEMO</span></h1>
+            <p>Generated: 2026-01-22 06:36:36 | Version: 0.3.5</p>
+        </div>
+
+        <div class="system-info">
+            <div class="system-info-item">
+                <span class="system-info-label">Computer Name</span>
+                <span class="system-info-value">DEMO-SCADA-01</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Operating System</span>
+                <span class="system-info-value">Microsoft Windows 10 Pro Build 19044</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">IP Address(es)</span>
+                <span class="system-info-value">N/A</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">SCADA Software</span>
+                <span class="system-info-value wincc">WinCC V7 - V7.5.1</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Station Type</span>
+                <span class="system-info-value station-server">SERVER</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">WinCC Project</span>
+                <span class="system-info-value project">DEMO_PROJECT</span>
+            </div>
+
+            <div class="system-info-item">
+                <span class="system-info-label">Scan Date</span>
+                <span class="system-info-value">2026-01-22 06:36:23</span>
+            </div>
+        </div>
+
+                <div class="system-info" style="margin-bottom: 24px;">
+            <div class="system-info-item">
+                <span class="system-info-label">Total Tags</span>
+                <span class="system-info-value" style="color: var(--yellow);">12279</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">PLCs Connected</span>
+                <span class="system-info-value" style="color: var(--yellow);">4</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Protocols</span>
+                <span class="system-info-value" style="color: var(--yellow);">S7ONLINE</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Archived Tags</span>
+                <span class="system-info-value" style="color: var(--yellow);">210</span>
+            </div>
+                        <div class="system-info-item" style="grid-column: span 2;">
+                <span class="system-info-label">Installed Drivers</span>
+                <span class="system-info-value" style="color: var(--blue); font-size: 14px;">OPC<br>OPC UA WinCC Channel<br>SIMATIC S7-1200, S7-1500 Channel</span>
+            </div>
+                        <div class="system-info-item" style="grid-column: span 2;">
+                <span class="system-info-label">PLC Addresses</span>
+                <span class="system-info-value" style="color: var(--red); font-size: 14px;">PLC_Main: 192.168.1.100<br>PLC_Local: LOCAL</span>
+            </div>
+        </div>
+
+                <div class="system-info" style="margin-bottom: 24px;">
+            <div class="system-info-item">
+                <span class="system-info-label">Architecture</span>
+                <span class="system-info-value" style="color: var(--blue);">Server-Client</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Server</span>
+                <span class="system-info-value" style="color: var(--green);">DEMO-SCADA-01</span>
+            </div>
+            <div class="system-info-item">
+                <span class="system-info-label">Client Count</span>
+                <span class="system-info-value" style="color: var(--yellow);">3</span>
+            </div>
+            <div class="system-info-item" style="grid-column: span 2;">
+                <span class="system-info-label">Client Stations</span>
+                <span class="system-info-value" style="color: var(--yellow); font-size: 14px;">DEMO-CLIENT-01<br>DEMO-CLIENT-02<br>DEMO-CLIENT-03</span>
+            </div>
+        </div>
+
+                <div class="system-info" style="margin-bottom: 24px;">
+            <div class="system-info-item">
+                <span class="system-info-label">WinCC User Count</span>
+                <span class="system-info-value" style="color: var(--blue);">15</span>
+            </div>
+            <div class="system-info-item" style="grid-column: span 3;">
+                <span class="system-info-label">WinCC Users</span>
+                <span class="system-info-value" style="font-size: 14px;">Administrator, Observer, Operator, Shift-Operator, Maintenance, Engineer_01, Engineer_02, Operator_01, Operator_02, Operator_03, Supervisor_01, Supervisor_02, Tech_01, Tech_02, Guest</span>
+            </div>
+        </div>
+
+        <div class="summary">
+            <div class="summary-card score">
+                <h2>42.3%</h2>
+                <p>Compliance Score</p>
+            </div>
+            <div class="summary-card">
+                <h2 class="pass">11</h2>
+                <p>Passed</p>
+            </div>
+            <div class="summary-card">
+                <h2 class="fail">9</h2>
+                <p>Failed</p>
+            </div>
+            <div class="summary-card">
+                <h2 class="warn">6</h2>
+                <p>Warnings</p>
+            </div>
+        </div>
+
+        <div class="filter-tabs">
+            <button class="filter-tab active" data-filter="all" onclick="filterResults('all', this)">
+                All<span class="count">26</span>
+            </button>
+            <button class="filter-tab" data-filter="pass" onclick="filterResults('pass', this)">
+                Passed<span class="count">11</span>
+            </button>
+            <button class="filter-tab" data-filter="fail" onclick="filterResults('fail', this)">
+                Failed<span class="count">9</span>
+            </button>
+            <button class="filter-tab" data-filter="warn" onclick="filterResults('warn', this)">
+                Warnings<span class="count">6</span>
+            </button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 100px;">Status</th>
+                    <th style="width: 200px;">Check</th>
+                    <th>Finding</th>
+                    <th style="width: 120px;">Compliance</th>
+                </tr>
+            </thead>
+            <tbody><tr class='category-row'><td colspan='4' class='category-header'>Access Control<span class='category-desc'>- Identification, authentication & authorization controls</span></td></tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>Password Length >= 12 characters</strong></td>
+                    <td>
+                        Minimum length: 0 characters (should be 12+)
+                        <div class='recommendation'><strong>Recommendation:</strong> Set MinimumPasswordLength to 12 or higher in Group Policy</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>Password Complexity Enabled</strong></td>
+                    <td>
+                        Password complexity is disabled
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable password complexity in Group Policy</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Reversible Encryption Disabled</strong></td>
+                    <td>
+                        Passwords are not stored with reversible encryption
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>Account Lockout Threshold</strong></td>
+                    <td>
+                        Account lockout is disabled
+                        <div class='recommendation'><strong>Recommendation:</strong> Set lockout threshold to 5 attempts</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Auto-Logon Disabled</strong></td>
+                    <td>
+                        Auto-logon is disabled
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Guest Account Disabled</strong></td>
+                    <td>
+                        Guest account is disabled
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Administrator Account Renamed</strong></td>
+                    <td>
+                        Default Administrator account name unchanged
+                        <div class='recommendation'><strong>Recommendation:</strong> Rename Administrator account to non-obvious name</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Use Control<span class='category-desc'>- Session management & resource usage restrictions</span></td></tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>USB Autorun Disabled</strong></td>
+                    <td>
+                        Autorun may be enabled (value: )
+                        <div class='recommendation'><strong>Recommendation:</strong> Set NoDriveTypeAutoRun to 255 in Group Policy</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Use Control">FR2</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>Screen Lock <= 10 minutes</strong></td>
+                    <td>
+                        Screen lock not properly configured
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable password-protected screen saver with 10 min timeout</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Use Control">FR2</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>System Integrity<span class='category-desc'>- Operating system hardening & security configuration</span></td></tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Antivirus Installed</strong></td>
+                    <td>
+                        Antivirus detected: Windows Defender
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Windows Defender Active</strong></td>
+                    <td>
+                        Real-time protection enabled, signatures: 02/06/2023 18:30:01
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>Windows Update < 90 days</strong></td>
+                    <td>
+                        Last update: 2023-03-07 (1051 days ago)
+                        <div class='recommendation'><strong>Recommendation:</strong> Apply security updates within 90-day window</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>PowerShell Execution Policy</strong></td>
+                    <td>
+                        Execution policy: Bypass (too permissive)
+                        <div class='recommendation'><strong>Recommendation:</strong> Set execution policy to AllSigned or RemoteSigned</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>No Unnecessary Services Running</strong></td>
+                    <td>
+                        Unnecessary services running: Connected User Experiences and Telemetry, Windows Search
+                        <div class='recommendation'><strong>Recommendation:</strong> Disable unnecessary services to reduce attack surface</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Data Confidentiality<span class='category-desc'>- Encryption, telemetry & data protection</span></td></tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>BitLocker Enabled (C:)</strong></td>
+                    <td>
+                        BitLocker not enabled on system drive
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable BitLocker for data-at-rest protection</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
+                        <span class="compliance-tag" data-tooltip="Supply chain security">NIS2 Art.21(d)</span>
+                    </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>No Unnecessary Network Shares</strong></td>
+                    <td>
+                        Found shares: Automation Projects, SCRIPTFCT, WinCC_Project
+                        <div class='recommendation'><strong>Recommendation:</strong> Review and remove unnecessary network shares</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
+                        <span class="compliance-tag" data-tooltip="Supply chain security">NIS2 Art.21(d)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>No Shares with Everyone Access</strong></td>
+                    <td>
+                        No shares grant full/change access to Everyone
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
+                        <span class="compliance-tag" data-tooltip="Supply chain security">NIS2 Art.21(d)</span>
+                    </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Windows Telemetry Disabled</strong></td>
+                    <td>
+                        Telemetry policy not configured via Group Policy
+                        <div class='recommendation'><strong>Recommendation:</strong> Configure telemetry settings in Group Policy for ICS systems</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
+                        <span class="compliance-tag" data-tooltip="Supply chain security">NIS2 Art.21(d)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Network Security<span class='category-desc'>- Firewall, protocols & network protection</span></td></tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Windows Firewall Enabled</strong></td>
+                    <td>
+                        Firewall enabled for all profiles (Domain, Private, Public)
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>RDP Disabled or NLA Required</strong></td>
+                    <td>
+                        RDP is disabled
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>No Risky Ports Open</strong></td>
+                    <td>
+                        No common risky ports detected in LISTENING state
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Audit & Logging<span class='category-desc'>- Security event logging & audit trail</span></td></tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Security Event Log Enabled</strong></td>
+                    <td>
+                        Security log enabled but small (20MB)
+                        <div class='recommendation'><strong>Recommendation:</strong> Increase Security log size to at least 100MB</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Timely Response to Events">FR6</span>
+                        <span class="compliance-tag" data-tooltip="Cybersecurity training and hygiene">NIS2 Art.21(g)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Logon Auditing Enabled</strong></td>
+                    <td>
+                        Logon events are being audited
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Timely Response to Events">FR6</span>
+                        <span class="compliance-tag" data-tooltip="Cybersecurity training and hygiene">NIS2 Art.21(g)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Resource Availability<span class='category-desc'>- Backup, recovery & service continuity</span></td></tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>System Restore Point < 7 days</strong></td>
+                    <td>
+                        No restore points found
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable System Restore and create restore points regularly</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Resource Availability">FR7</span>
+                        <span class="compliance-tag" data-tooltip="Vulnerability handling and disclosure">NIS2 Art.21(f)</span>
+                    </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>WinCC Specific<span class='category-desc'>- Siemens WinCC security configuration</span></td></tr>                <tr data-status="info">
+                    <td><span class="status info">INFO</span></td>
+                    <td><strong>WinCC Installation Detected</strong></td>
+                    <td>
+                        WinCC V7 detected: V7.5.1
+                        <div class='recommendation'><strong>Recommendation:</strong> Ensure WinCC is patched to latest version</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="fail">
+                    <td><span class="status fail">FAIL</span></td>
+                    <td><strong>WinCC Runtime Non-Admin User</strong></td>
+                    <td>
+                        WinCC Runtime running as administrator: DEMO-SCADA-01\admin
+                        <div class='recommendation'><strong>Recommendation:</strong> Configure WinCC to run with a dedicated non-admin service account</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>No Default WinCC User Accounts</strong></td>
+                    <td>
+                        No default user accounts found in WinCC (15 users configured)
+
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
+                </tr>                <tr data-status="info">
+                    <td><span class="status info">INFO</span></td>
+                    <td><strong>Siemens Encrypted Communication</strong></td>
+                    <td>
+                        Siemens Security configuration not found
+                        <div class='recommendation'><strong>Recommendation:</strong> Configure Siemens Security Controller if available</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>            </tbody>
+        </table>
+
+        <div class="footer">
+            <p>Generated by <a href="https://icscheck.com">ICScheck</a> v0.3.5 |
+            <a href="https://github.com/icscheck-tool/icscheck">GitHub</a> |
+            MIT License</p>
+        </div>
+    </div>
+
+    <script>
+        // Theme toggle
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-theme', newTheme);
+
+            const themeText = document.querySelector('.theme-text');
+            themeText.textContent = newTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+
+            localStorage.setItem('icscheck-theme', newTheme);
+        }
+
+        // Load saved theme
+        const savedTheme = localStorage.getItem('icscheck-theme');
+        if (savedTheme) {
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            document.querySelector('.theme-text').textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+        }
+
+        // Filter results
+        function filterResults(filter, btn) {
+            // Update active button
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.remove('active', 'active-fail', 'active-warn');
+            });
+
+            if (filter === 'fail') btn.classList.add('active-fail');
+            else if (filter === 'warn') btn.classList.add('active-warn');
+            else btn.classList.add('active');
+
+            // Filter rows
+            const rows = document.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                if (row.classList.contains('category-row')) {
+                    // Category rows: show if any child matches
+                    row.classList.remove('hidden');
+                    return;
+                }
+
+                const status = row.getAttribute('data-status');
+                if (filter === 'all' || status === filter) {
+                    row.classList.remove('hidden');
+                } else {
+                    row.classList.add('hidden');
+                }
+            });
+
+            // Hide empty categories
+            const categoryRows = document.querySelectorAll('.category-row');
+            categoryRows.forEach(catRow => {
+                let hasVisibleChild = false;
+                let nextRow = catRow.nextElementSibling;
+
+                while (nextRow && !nextRow.classList.contains('category-row')) {
+                    if (!nextRow.classList.contains('hidden')) {
+                        hasVisibleChild = true;
+                        break;
+                    }
+                    nextRow = nextRow.nextElementSibling;
+                }
+
+                if (hasVisibleChild || filter === 'all') {
+                    catRow.classList.remove('hidden');
+                } else {
+                    catRow.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
