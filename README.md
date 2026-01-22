@@ -104,4 +104,4 @@ If ICScheck helps you, please:
 ⭐ Star this repository
 🐛 Report issues
 📢 Share with colleagues
-<p align="center"> <b>Secure your ICS. Achieve compliance. Sleep better.</b><br> Made with ❤️ for the industrial automation community </p> 
+<p align="center"> <b>Secure your ICS. Achieve compliance. Sleep better.</b><br> Made with ❤️ for the industrial automation community </p> ```
