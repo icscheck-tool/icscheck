@@ -20,9 +20,9 @@ A lightweight PowerShell tool that automatically audits your SCADA/HMI/DCS works
 
 | System Type | Examples |
 |-------------|----------|
-| **SCADA** | Siemens WinCC V7/V8, TIA Proffesional, WinCC Unified, AVEVA InTouch, Rockwell FactoryTalk View SE |
+| **SCADA** | Siemens WinCC V7/V8, TIA Professional, WinCC Unified, AVEVA InTouch, Rockwell FactoryTalk View SE |
 | **HMI** | Siemens Comfort Panels, Rockwell PanelView |
-| **DCS** | Siemens PCS7|
+| **DCS** | Siemens PCS7 |
 | **BMS** | Building automation systems |
 | **PLC/PAC** | Any Windows-based engineering station |
 
@@ -61,33 +61,36 @@ Availability	Backups, restore points	FR7
 📈 Sample Report
 After running ICScheck, you'll receive:
 
-Compliance Score: X% aligned with IEC 62443 / NIS2
-Pass/Fail Status: For each security control
-Risk Assessment: Prioritized findings
-Remediation Steps: How to fix each issue
-Export Options: HTML report for auditors
+Compliance Score - X% aligned with IEC 62443 / NIS2
+Pass/Fail Status - For each security control
+Risk Assessment - Prioritized findings
+Remediation Steps - How to fix each issue
+Export Options - HTML report for auditors
 🗺️ Roadmap
- Core PowerShell audit engine
- IEC 62443-3-3 mapping
- NIS2 Article 21 mapping
- HTML report generation
- PDF export
- NIST CSF mapping
- Scheduled scans
- Central dashboard (Pro)
- Multi-language support
+Completed:
+
+✅ Core PowerShell audit engine
+✅ IEC 62443-3-3 mapping
+✅ NIS2 Article 21 mapping
+✅ HTML report generation
+Coming Soon:
+
+🔜 PDF export
+🔜 NIST CSF mapping
+🔜 Scheduled scans
+🔜 Central dashboard (Pro)
+🔜 Multi-language support
 🤝 Contributing
-Contributions are welcome! Please read our Contributing Guidelines before submitting PRs.
+Contributions are welcome!
 
 Ways to contribute:
+
 🐛 Report bugs
 💡 Suggest new checks
 📖 Improve documentation
 🔧 Submit pull requests
 📄 License
 MIT License - Use it, modify it, share it. No restrictions.
-
-See LICENSE for details.
 
 👨‍💻 Author
 Łukasz Krzesiński
@@ -96,6 +99,7 @@ See LICENSE for details.
 140+ SCADA/HMI/DCS systems delivered
 Certified Siemens SIMATIC specialist
 📧 hello@icscheck.com
+
 🌐 icscheck.com
 
 ⭐ Support the Project
@@ -104,4 +108,6 @@ If ICScheck helps you, please:
 ⭐ Star this repository
 🐛 Report issues
 📢 Share with colleagues
-<p align="center"> <b>Secure your ICS. Achieve compliance. Sleep better.</b><br> Made with ❤️ for the industrial automation community </p> ```
+Secure your ICS. Achieve compliance. Sleep better.
+
+Made with ❤️ for the industrial automation community
