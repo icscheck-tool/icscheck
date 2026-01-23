@@ -48,7 +48,7 @@ cd icscheck/src
 
 The tool will:
 1. Scan your system configuration
-2. Check against 25+ security controls
+2. Check against **36+ security controls**
 3. Generate an HTML compliance report
 4. Provide remediation recommendations
 
@@ -56,15 +56,16 @@ The tool will:
 
 ## 📊 What Does It Check?
 
-| Category | Checks | IEC 62443 |
-|----------|--------|-----------|
-| **Access Control** | Users, passwords, lockout policies | FR1 |
-| **Use Control** | USB, autorun, admin rights | FR2 |
-| **System Integrity** | Antivirus, updates, patches | FR3 |
-| **Data Confidentiality** | Shares, encryption | FR4 |
-| **Network Security** | Firewall, open ports, RDP | FR5 |
-| **Audit & Logging** | Event logs, retention | FR6 |
-| **Availability** | Backups, restore points | FR7 |
+| Category | Checks | IEC 62443 | NIS2 |
+|----------|--------|-----------|------|
+| **Access Control** | Users, passwords, lockout, UAC, password age/history | FR1 | Art.21(i) |
+| **Use Control** | USB, autorun, screen lock | FR2 | Art.21(g) |
+| **System Integrity** | Antivirus, Defender real-time, updates, Secure Boot | FR3 | Art.21(e) |
+| **Data Confidentiality** | BitLocker, shares, telemetry | FR4 | Art.21(h) |
+| **Network Security** | Firewall, RDP, SMBv1, TLS 1.2+, DCOM hardening | FR5 | Art.21(e) |
+| **Audit & Logging** | Event logs, audit policy | FR6 | Art.21(b) |
+| **Availability** | System Restore, Shadow Copy | FR7 | Art.21(c) |
+| **WinCC Specific** | Users hierarchy, drivers, alarm logging, SQL security | - | Art.21(b) |
 
 ---
 
@@ -84,9 +85,12 @@ After running ICScheck, you will receive:
 
 **Completed:**
 - ✅ Core PowerShell audit engine
-- ✅ IEC 62443-3-3 mapping
-- ✅ NIS2 Article 21 mapping
-- ✅ HTML report generation
+- ✅ IEC 62443-3-3 mapping (FR1-FR7)
+- ✅ NIS2 Article 21 mapping (~80% coverage)
+- ✅ HTML report generation (dark/light theme)
+- ✅ WinCC V7/V8 deep integration
+- ✅ Communication Architecture tree
+- ✅ User hierarchy visualization
 
 **Coming Soon:**
 - 🔜 PDF export
