@@ -38,13 +38,20 @@ A lightweight PowerShell tool that automatically audits your SCADA/HMI/DCS works
 
 ## 🚀 Quick Start
 
-Run as Administrator on your ICS workstation:
+Run as **Administrator** on your ICS workstation:
 
 ```powershell
 git clone https://github.com/icscheck-tool/icscheck.git
 cd icscheck/src
-.\ICScheck.ps1
+powershell -ExecutionPolicy Bypass -File "ICScheck.ps1"
 ```
+
+> **Note:** The `-ExecutionPolicy Bypass` flag is required because most ICS systems have restricted PowerShell execution policies. This only affects the current script execution and does not change system settings.
+
+**Alternative (if git is not available):**
+1. Download ZIP from [GitHub](https://github.com/icscheck-tool/icscheck/archive/refs/heads/main.zip)
+2. Extract to any folder
+3. Right-click `ICScheck.ps1` → "Run with PowerShell" (as Administrator)
 
 The tool will:
 1. Scan your system configuration
