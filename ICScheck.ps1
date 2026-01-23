@@ -9,7 +9,7 @@
     Primary target: Siemens WinCC V7/V8 stations
 
 .NOTES
-    Version:        0.4.0
+    Version:        0.4.1
     Author:         Lukasz Krzesinski
     Website:        https://icscheck.com
     GitHub:         https://github.com/icscheck-tool/icscheck
@@ -34,7 +34,7 @@ if (-not $OutputPath) {
 }
 
 #region Configuration
-$script:Version = "0.4.0"
+$script:Version = "0.4.1"
 $script:ReportDate = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $script:ComputerName = $env:COMPUTERNAME
 $script:Results = @()
@@ -106,6 +106,7 @@ $script:SystemInfo = @{
     # WinCC Users
     WinCCUsers = @()
     WinCCUserCount = 0
+    WinCCUserTree = @()
     ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 }
 #endregion
@@ -450,12 +451,30 @@ ORDER BY c.CHANNELID, u.CHANNELUNITID, conn.CONNECTIONID
                     }
                 }
 
-                # Get WinCC users from PW_USER (without passwords!)
-                $userQuery = "SELECT NAME FROM PW_USER ORDER BY ID"
+                # Get WinCC users from PW_USER with group hierarchy (without passwords!)
+                # GRPID = -1 means it's a GROUP, GRPID > 0 means USER belonging to that group
+                $userQuery = "SELECT ID, NAME, GRPID FROM PW_USER ORDER BY ID"
                 $userResult = Invoke-Sqlcmd -ServerInstance $sqlInstance -Database $dbName -Query $userQuery -ErrorAction SilentlyContinue
                 if ($userResult) {
-                    $script:SystemInfo.WinCCUsers = @($userResult | ForEach-Object { $_.NAME })
+                    $allUsers = @($userResult)
+                    # Get only actual users (GRPID > 0) for flat list
+                    $script:SystemInfo.WinCCUsers = @($allUsers | Where-Object { $_.GRPID -gt 0 } | ForEach-Object { $_.NAME.Trim() })
                     $script:SystemInfo.WinCCUserCount = $script:SystemInfo.WinCCUsers.Count
+
+                    # Build user tree (groups with their members)
+                    $groups = @($allUsers | Where-Object { $_.GRPID -eq -1 })
+                    $users = @($allUsers | Where-Object { $_.GRPID -gt 0 })
+                    $userTree = @()
+
+                    foreach ($group in $groups) {
+                        $groupMembers = @($users | Where-Object { $_.GRPID -eq $group.ID } | ForEach-Object { $_.NAME.Trim() })
+                        $userTree += @{
+                            GroupName = $group.NAME.Trim()
+                            GroupID = $group.ID
+                            Members = $groupMembers
+                        }
+                    }
+                    $script:SystemInfo.WinCCUserTree = $userTree
                 }
             }
         }
@@ -1338,12 +1357,13 @@ function Test-WinCCDefaultUsers {
 
     if ($script:SystemInfo.WinCCUserCount -gt 0) {
         # Check for default user accounts that should be renamed or removed
-        $defaultUsers = @('Administrator', 'Admin', 'Operator', 'Guest', 'User')
+        $defaultUsers = @('Administrator', 'Admin', 'Operator', 'Observer', 'Guest', 'User', 'Default', 'Test', 'Demo')
         $foundDefaults = @()
 
         foreach ($user in $script:SystemInfo.WinCCUsers) {
-            if ($user -in $defaultUsers) {
-                $foundDefaults += $user
+            $trimmedUser = $user.Trim()
+            if ($trimmedUser -in $defaultUsers) {
+                $foundDefaults += $trimmedUser
             }
         }
 
@@ -1542,6 +1562,35 @@ function New-HtmlReport {
         $commTreeHtml += '<div class="comm-tree">'
         $commTreeHtml += $treeContent
         $commTreeHtml += '</div></div></div>'
+    }
+
+    # Build WinCC User Tree HTML
+    $userTreeHtml = ""
+    if ($script:SystemInfo.WinCCUserTree -and $script:SystemInfo.WinCCUserTree.Count -gt 0) {
+        $userContent = ""
+
+        foreach ($group in $script:SystemInfo.WinCCUserTree) {
+            # Show all groups (even empty ones)
+            $userContent += "<div class='tree-channel'>"
+            $userContent += "<div class='tree-node channel'>&#x1F465; $($group.GroupName)</div>"
+
+            if ($group.Members.Count -gt 0) {
+                $userContent += "<div class='tree-children'>"
+                foreach ($member in $group.Members) {
+                    $userContent += "<div class='tree-node user'>&#x1F464; $member</div>"
+                }
+                $userContent += "</div>"
+            }
+
+            $userContent += "</div>"
+        }
+
+        $userTreeHtml = '<div class="system-info" style="margin-bottom: 24px;">'
+        $userTreeHtml += '<div style="grid-column: span 4;">'
+        $userTreeHtml += "<span class='system-info-label' style='font-size: 14px; margin-bottom: 12px; display: block;'>&#x1F512; WinCC Users ($($script:SystemInfo.WinCCUserCount) users)</span>"
+        $userTreeHtml += '<div class="comm-tree">'
+        $userTreeHtml += $userContent
+        $userTreeHtml += '</div></div></div>'
     }
 
     $html = @"
@@ -1803,6 +1852,7 @@ function New-HtmlReport {
         .comm-tree .tree-node.channel { background: var(--bg-secondary); color: var(--blue); font-weight: bold; }
         .comm-tree .tree-node.unit { background: var(--bg-secondary); color: var(--yellow); margin-left: 20px; }
         .comm-tree .tree-node.connection { color: var(--green); margin-left: 40px; }
+        .comm-tree .tree-node.user { color: var(--text-primary); margin-left: 20px; }
         .comm-tree .tree-children { margin-left: 12px; border-left: 2px solid var(--border); padding-left: 8px; }
         @media (max-width: 768px) {
             body { padding: 16px; }
@@ -1911,18 +1961,7 @@ function New-HtmlReport {
         </div>
 "@ })
 
-        $(if ($script:SystemInfo.WinCCUserCount -gt 0) { @"
-        <div class="system-info" style="margin-bottom: 24px;">
-            <div class="system-info-item">
-                <span class="system-info-label">WinCC User Count</span>
-                <span class="system-info-value" style="color: var(--blue);">$($script:SystemInfo.WinCCUserCount)</span>
-            </div>
-            <div class="system-info-item" style="grid-column: span 3;">
-                <span class="system-info-label">WinCC Users</span>
-                <span class="system-info-value" style="font-size: 14px;">$($script:SystemInfo.WinCCUsers -join ', ')</span>
-            </div>
-        </div>
-"@ })
+        $userTreeHtml
 
         $commTreeHtml
 
