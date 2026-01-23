@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
@@ -244,15 +244,20 @@
             font-size: 13px;
             margin-left: 8px;
         }
-        .demo-badge {
-            background: var(--yellow);
-            color: #000;
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-left: 12px;
+        .comm-tree {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
         }
+        .comm-tree .tree-channel { margin-bottom: 8px; }
+        .comm-tree .tree-node { padding: 4px 8px; border-radius: 4px; margin: 2px 0; display: block; }
+        .comm-tree .tree-node.channel { background: var(--bg-secondary); color: var(--blue); font-weight: bold; }
+        .comm-tree .tree-node.unit { background: var(--bg-secondary); color: var(--yellow); margin-left: 20px; }
+        .comm-tree .tree-node.connection { color: var(--green); margin-left: 40px; }
+        .comm-tree .tree-node.user { color: var(--text-primary); margin-left: 20px; }
+        .comm-tree .tree-children { margin-left: 12px; border-left: 2px solid var(--border); padding-left: 8px; }
         @media (max-width: 768px) {
             body { padding: 16px; }
             .theme-toggle { position: static; margin-bottom: 16px; justify-content: center; }
@@ -277,8 +282,9 @@
                 </svg>
                 <span class="theme-text">Light Mode</span>
             </button>
-            <h1>ICScheck Security Report <span class="demo-badge">DEMO</span></h1>
-            <p>Generated: 2026-01-22 06:36:36 | Version: 0.3.5</p>
+            <h1>ICScheck Security Report</h1>
+            <p style="background: var(--yellow); color: #000; padding: 8px 16px; border-radius: 4px; display: inline-block; margin-bottom: 10px; font-weight: bold;">⚠️ DEMO REPORT - Sample data for demonstration purposes</p>
+            <p>Generated: 2026-01-15 10:30:00 | Version: 0.5.0</p>
         </div>
 
         <div class="system-info">
@@ -304,12 +310,12 @@
             </div>
             <div class="system-info-item">
                 <span class="system-info-label">WinCC Project</span>
-                <span class="system-info-value project">DEMO_PROJECT</span>
+                <span class="system-info-value project">DEMO_PROJECT (from DB name)</span>
             </div>
-
+            
             <div class="system-info-item">
                 <span class="system-info-label">Scan Date</span>
-                <span class="system-info-value">2026-01-22 06:36:23</span>
+                <span class="system-info-value">2026-01-15 10:30:00</span>
             </div>
         </div>
 
@@ -323,20 +329,8 @@
                 <span class="system-info-value" style="color: var(--yellow);">4</span>
             </div>
             <div class="system-info-item">
-                <span class="system-info-label">Protocols</span>
-                <span class="system-info-value" style="color: var(--yellow);">S7ONLINE</span>
-            </div>
-            <div class="system-info-item">
                 <span class="system-info-label">Archived Tags</span>
-                <span class="system-info-value" style="color: var(--yellow);">210</span>
-            </div>
-                        <div class="system-info-item" style="grid-column: span 2;">
-                <span class="system-info-label">Installed Drivers</span>
-                <span class="system-info-value" style="color: var(--blue); font-size: 14px;">OPC<br>OPC UA WinCC Channel<br>SIMATIC S7-1200, S7-1500 Channel</span>
-            </div>
-                        <div class="system-info-item" style="grid-column: span 2;">
-                <span class="system-info-label">PLC Addresses</span>
-                <span class="system-info-value" style="color: var(--red); font-size: 14px;">PLC_Main: 192.168.1.100<br>PLC_Local: LOCAL</span>
+                <span class="system-info-value" style="color: var(--yellow);">207</span>
             </div>
         </div>
 
@@ -347,7 +341,7 @@
             </div>
             <div class="system-info-item">
                 <span class="system-info-label">Server</span>
-                <span class="system-info-value" style="color: var(--green);">DEMO-SCADA-01</span>
+                <span class="system-info-value" style="color: var(--green);">DESKTOP-VD66JB0</span>
             </div>
             <div class="system-info-item">
                 <span class="system-info-label">Client Count</span>
@@ -355,28 +349,21 @@
             </div>
             <div class="system-info-item" style="grid-column: span 2;">
                 <span class="system-info-label">Client Stations</span>
-                <span class="system-info-value" style="color: var(--yellow); font-size: 14px;">DEMO-CLIENT-01<br>DEMO-CLIENT-02<br>DEMO-CLIENT-03</span>
+                <span class="system-info-value" style="color: var(--yellow); font-size: 14px;">CLIENT-HMI-01<br>CLIENT-HMI-02<br>CLIENT-ENG-01</span>
             </div>
         </div>
 
-                <div class="system-info" style="margin-bottom: 24px;">
-            <div class="system-info-item">
-                <span class="system-info-label">WinCC User Count</span>
-                <span class="system-info-value" style="color: var(--blue);">15</span>
-            </div>
-            <div class="system-info-item" style="grid-column: span 3;">
-                <span class="system-info-label">WinCC Users</span>
-                <span class="system-info-value" style="font-size: 14px;">Administrator, Observer, Operator, Shift-Operator, Maintenance, Engineer_01, Engineer_02, Operator_01, Operator_02, Operator_03, Supervisor_01, Supervisor_02, Tech_01, Tech_02, Guest</span>
-            </div>
-        </div>
+        <div class="system-info" style="margin-bottom: 24px;"><div style="grid-column: span 4;"><span class='system-info-label' style='font-size: 14px; margin-bottom: 12px; display: block;'>&#x1F512; WinCC Users (9 users)</span><div class="comm-tree"><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Administrator</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Administrator</div><div class='tree-node user'>&#x1F464; eng_user1</div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Observer</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Observer</div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Operator</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Operator</div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Shift-Operator</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Shift-Operator</div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Client-Mainteance</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Client-Maintenance</div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F465; Engineering</div><div class='tree-children'><div class='tree-node user'>&#x1F464; Engineer1</div><div class='tree-node user'>&#x1F464; Engineer2</div><div class='tree-node user'>&#x1F464; Developer</div></div></div></div></div></div>
+
+        <div class="system-info" style="margin-bottom: 24px;"><div style="grid-column: span 4;"><span class="system-info-label" style="font-size: 14px; margin-bottom: 12px; display: block;">&#x1F310; Communication Architecture</span><div class="comm-tree"><div class='tree-channel'><div class='tree-node channel'>&#x1F4E1; SIMATIC S7-1200, S7-1500 Channel</div><div class='tree-children'><div class='tree-unit'><div class='tree-node unit'>&#x1F4E6; OMS+</div><div class='tree-children'><div class='tree-node connection'>&#x1F517; CPU (10.0.0.100:102)</div></div></div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F4E1; OPC</div><div class='tree-children'><div class='tree-unit'><div class='tree-node unit'>&#x1F4E6; OPC Groups (OPCHN Unit #1)</div><div class='tree-children'><div class='tree-node connection'>&#x1F517; NewConnection_2</div></div></div></div></div><div class='tree-channel'><div class='tree-node channel'>&#x1F4E1; OPC UA WinCC Channel</div><div class='tree-children'><div class='tree-unit'><div class='tree-node unit'>&#x1F4E6; OPC UA Connections</div><div class='tree-children'><div class='tree-node connection'>&#x1F517; NewConnection_3</div></div></div></div></div></div></div></div>
 
         <div class="summary">
             <div class="summary-card score">
-                <h2>42.3%</h2>
+                <h2>45.7%</h2>
                 <p>Compliance Score</p>
             </div>
             <div class="summary-card">
-                <h2 class="pass">11</h2>
+                <h2 class="pass">16</h2>
                 <p>Passed</p>
             </div>
             <div class="summary-card">
@@ -384,23 +371,23 @@
                 <p>Failed</p>
             </div>
             <div class="summary-card">
-                <h2 class="warn">6</h2>
+                <h2 class="warn">10</h2>
                 <p>Warnings</p>
             </div>
         </div>
 
         <div class="filter-tabs">
             <button class="filter-tab active" data-filter="all" onclick="filterResults('all', this)">
-                All<span class="count">26</span>
+                All<span class="count">35</span>
             </button>
             <button class="filter-tab" data-filter="pass" onclick="filterResults('pass', this)">
-                Passed<span class="count">11</span>
+                Passed<span class="count">16</span>
             </button>
             <button class="filter-tab" data-filter="fail" onclick="filterResults('fail', this)">
                 Failed<span class="count">9</span>
             </button>
             <button class="filter-tab" data-filter="warn" onclick="filterResults('warn', this)">
-                Warnings<span class="count">6</span>
+                Warnings<span class="count">10</span>
             </button>
         </div>
 
@@ -440,7 +427,7 @@
                     <td><strong>Reversible Encryption Disabled</strong></td>
                     <td>
                         Passwords are not stored with reversible encryption
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
@@ -462,7 +449,7 @@
                     <td><strong>Auto-Logon Disabled</strong></td>
                     <td>
                         Auto-logon is disabled
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
@@ -473,7 +460,7 @@
                     <td><strong>Guest Account Disabled</strong></td>
                     <td>
                         Guest account is disabled
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
@@ -517,7 +504,7 @@
                     <td><strong>Antivirus Installed</strong></td>
                     <td>
                         Antivirus detected: Windows Defender
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
@@ -528,17 +515,28 @@
                     <td><strong>Windows Defender Active</strong></td>
                     <td>
                         Real-time protection enabled, signatures: 02/06/2023 18:30:01
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Windows Defender Real-time Protection</strong></td>
+                    <td>
+                        Real-time ON but definitions are 1081 days old
+                        <div class='recommendation'><strong>Recommendation:</strong> Update Windows Defender definitions</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: ">SR3.2</span>
                         <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
                     </td>
                 </tr>                <tr data-status="fail">
                     <td><span class="status fail">FAIL</span></td>
                     <td><strong>Windows Update < 90 days</strong></td>
                     <td>
-                        Last update: 2023-03-07 (1051 days ago)
+                        Last update: 2023-03-07 (1052 days ago)
                         <div class='recommendation'><strong>Recommendation:</strong> Apply security updates within 90-day window</div>
                     </td>
                     <td>
@@ -567,6 +565,17 @@
                         <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
                         <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
                     </td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Secure Boot Enabled</strong></td>
+                    <td>
+                        Secure Boot is disabled
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable Secure Boot in UEFI/BIOS settings</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: System Integrity">FR3</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
                 </tr><tr class='category-row'><td colspan='4' class='category-header'>Data Confidentiality<span class='category-desc'>- Encryption, telemetry & data protection</span></td></tr>                <tr data-status="warn">
                     <td><span class="status warn">WARN</span></td>
                     <td><strong>BitLocker Enabled (C:)</strong></td>
@@ -582,7 +591,7 @@
                     <td><span class="status warn">WARN</span></td>
                     <td><strong>No Unnecessary Network Shares</strong></td>
                     <td>
-                        Found shares: Automation Projects, SCRIPTFCT, WinCC_Project
+                        Found shares: Projects, Scripts, WinCC_Project
                         <div class='recommendation'><strong>Recommendation:</strong> Review and remove unnecessary network shares</div>
                     </td>
                     <td>
@@ -594,7 +603,7 @@
                     <td><strong>No Shares with Everyone Access</strong></td>
                     <td>
                         No shares grant full/change access to Everyone
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
@@ -611,12 +620,23 @@
                         <span class="compliance-tag" data-tooltip="IEC 62443: Data Confidentiality">FR4</span>
                         <span class="compliance-tag" data-tooltip="Supply chain security">NIS2 Art.21(d)</span>
                     </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>System Integrity<span class='category-desc'>- Operating system hardening & security configuration</span></td></tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
+                    <td><strong>Volume Shadow Copy Configured</strong></td>
+                    <td>
+                        VSS service not running (StartType: Manual)
+                        <div class='recommendation'><strong>Recommendation:</strong> Enable Volume Shadow Copy for backup and recovery</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Resource Availability">FR7</span>
+                        <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
                 </tr><tr class='category-row'><td colspan='4' class='category-header'>Network Security<span class='category-desc'>- Firewall, protocols & network protection</span></td></tr>                <tr data-status="pass">
                     <td><span class="status pass">PASS</span></td>
                     <td><strong>Windows Firewall Enabled</strong></td>
                     <td>
                         Firewall enabled for all profiles (Domain, Private, Public)
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
@@ -627,7 +647,7 @@
                     <td><strong>RDP Disabled or NLA Required</strong></td>
                     <td>
                         RDP is disabled
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
@@ -638,11 +658,44 @@
                     <td><strong>No Risky Ports Open</strong></td>
                     <td>
                         No common risky ports detected in LISTENING state
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
                         <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>SMBv1 Protocol Disabled</strong></td>
+                    <td>
+                        SMBv1 is disabled (vulnerable protocol removed)
+                        
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>TLS 1.2+ Only (Legacy Protocols Disabled)</strong></td>
+                    <td>
+                        No legacy SSL/TLS protocols explicitly enabled
+                        
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="">NIS2 Art.21(h)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>DCOM Security Hardened</strong></td>
+                    <td>
+                        DCOM enabled with strong authentication (Level: Not set)
+                        
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
+                        <span class="compliance-tag" data-tooltip="Security in network and information systems">NIS2 Art.21(e)</span>
                     </td>
                 </tr><tr class='category-row'><td colspan='4' class='category-header'>Audit & Logging<span class='category-desc'>- Security event logging & audit trail</span></td></tr>                <tr data-status="warn">
                     <td><span class="status warn">WARN</span></td>
@@ -660,7 +713,7 @@
                     <td><strong>Logon Auditing Enabled</strong></td>
                     <td>
                         Logon events are being audited
-
+                        
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Timely Response to Events">FR6</span>
@@ -677,6 +730,28 @@
                         <span class="compliance-tag" data-tooltip="IEC 62443: Resource Availability">FR7</span>
                         <span class="compliance-tag" data-tooltip="Vulnerability handling and disclosure">NIS2 Art.21(f)</span>
                     </td>
+                </tr><tr class='category-row'><td colspan='4' class='category-header'>Access Control<span class='category-desc'>- Identification, authentication & authorization controls</span></td></tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>Password Maximum Age <= 90 days</strong></td>
+                    <td>
+                        Password max age: 42 days
+                        
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="">NIS2 Art.21(i)</span>
+                    </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>UAC Enabled and Configured</strong></td>
+                    <td>
+                        UAC is enabled with prompt level: 5
+                        
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
+                        <span class="compliance-tag" data-tooltip="">NIS2 Art.21(i)</span>
+                    </td>
                 </tr><tr class='category-row'><td colspan='4' class='category-header'>WinCC Specific<span class='category-desc'>- Siemens WinCC security configuration</span></td></tr>                <tr data-status="info">
                     <td><span class="status info">INFO</span></td>
                     <td><strong>WinCC Installation Detected</strong></td>
@@ -692,19 +767,19 @@
                     <td><span class="status fail">FAIL</span></td>
                     <td><strong>WinCC Runtime Non-Admin User</strong></td>
                     <td>
-                        WinCC Runtime running as administrator: DEMO-SCADA-01\admin
+                        WinCC Runtime running as administrator: DEMO-SCADA-01\admin_user
                         <div class='recommendation'><strong>Recommendation:</strong> Configure WinCC to run with a dedicated non-admin service account</div>
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
                         <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
                     </td>
-                </tr>                <tr data-status="pass">
-                    <td><span class="status pass">PASS</span></td>
+                </tr>                <tr data-status="warn">
+                    <td><span class="status warn">WARN</span></td>
                     <td><strong>No Default WinCC User Accounts</strong></td>
                     <td>
-                        No default user accounts found in WinCC (15 users configured)
-
+                        Default accounts found: Administrator, Observer, Operator
+                        <div class='recommendation'><strong>Recommendation:</strong> Rename or disable default accounts, use unique usernames</div>
                     </td>
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: Identification and Authentication Control">FR1</span>
@@ -721,11 +796,22 @@
                         <span class="compliance-tag" data-tooltip="IEC 62443: Restricted Data Flow">FR5</span>
                         <span class="compliance-tag" data-tooltip="Business continuity and crisis management">NIS2 Art.21(c)</span>
                     </td>
+                </tr>                <tr data-status="pass">
+                    <td><span class="status pass">PASS</span></td>
+                    <td><strong>WinCC Alarm Logging Enabled</strong></td>
+                    <td>
+                        WinCC database accessible - verify alarm logging in WinCC Explorer
+                        <div class='recommendation'><strong>Recommendation:</strong> Ensure Alarm Logging is configured in WinCC Alarm Settings</div>
+                    </td>
+                    <td>
+                        <span class="compliance-tag" data-tooltip="IEC 62443: Timely Response to Events">FR6</span>
+                        <span class="compliance-tag" data-tooltip="Incident handling and response">NIS2 Art.21(b)</span>
+                    </td>
                 </tr>            </tbody>
         </table>
 
         <div class="footer">
-            <p>Generated by <a href="https://icscheck.com">ICScheck</a> v0.3.5 |
+            <p>Generated by <a href="https://icscheck.com">ICScheck</a> v0.5.0 |
             <a href="https://github.com/icscheck-tool/icscheck">GitHub</a> |
             MIT License</p>
         </div>
