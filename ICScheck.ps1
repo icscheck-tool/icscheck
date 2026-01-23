@@ -9,7 +9,7 @@
     Primary target: Siemens WinCC V7/V8 stations
 
 .NOTES
-    Version:        0.4.1
+    Version:        0.5.0
     Author:         Lukasz Krzesinski
     Website:        https://icscheck.com
     GitHub:         https://github.com/icscheck-tool/icscheck
@@ -34,7 +34,7 @@ if (-not $OutputPath) {
 }
 
 #region Configuration
-$script:Version = "0.4.1"
+$script:Version = "0.5.0"
 $script:ReportDate = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $script:ComputerName = $env:COMPUTERNAME
 $script:Results = @()
@@ -1514,6 +1514,424 @@ function Test-WindowsTelemetry {
     }
 }
 
+# ============== NIS2 ADDITIONAL CHECKS ==============
+
+function Test-SMBv1Disabled {
+    Write-Host "[NIS2] Checking SMBv1 Protocol Status..." -ForegroundColor Cyan
+
+    try {
+        # Check SMBv1 via Windows Feature (Server) or registry
+        $smbv1Feature = Get-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -ErrorAction SilentlyContinue
+        $smbv1Registry = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -ErrorAction SilentlyContinue
+
+        $smbv1Disabled = $false
+        if ($smbv1Feature -and $smbv1Feature.State -eq "Disabled") {
+            $smbv1Disabled = $true
+        }
+        if ($smbv1Registry -and $smbv1Registry.SMB1 -eq 0) {
+            $smbv1Disabled = $true
+        }
+
+        if ($smbv1Disabled) {
+            Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
+                -Status "PASS" -Finding "SMBv1 is disabled (vulnerable protocol removed)" `
+                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+        }
+        else {
+            Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
+                -Status "FAIL" -Finding "SMBv1 is ENABLED - vulnerable to EternalBlue/WannaCry" `
+                -Recommendation "Disable SMBv1: Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol" `
+                -IEC62443 "FR5" -NIS2 "Art.21(e)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
+            -Status "INFO" -Finding "Could not check SMBv1 status" `
+            -Recommendation "Manually verify SMBv1 is disabled" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+    }
+}
+
+function Test-TLSConfiguration {
+    Write-Host "[NIS2] Checking TLS/SSL Configuration..." -ForegroundColor Cyan
+
+    $findings = @()
+    $failed = $false
+
+    # Check TLS 1.2 is enabled
+    $tls12Client = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "Enabled" -ErrorAction SilentlyContinue
+    $tls12Server = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+
+    # Check SSL 2.0/3.0 are disabled
+    $ssl2 = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+    $ssl3 = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+    $tls10 = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+    $tls11 = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+
+    # SSL 2.0 check
+    if ($ssl2 -and $ssl2.Enabled -eq 1) {
+        $findings += "SSL 2.0 ENABLED (critical vulnerability)"
+        $failed = $true
+    }
+
+    # SSL 3.0 check (POODLE vulnerability)
+    if ($ssl3 -and $ssl3.Enabled -eq 1) {
+        $findings += "SSL 3.0 ENABLED (POODLE vulnerability)"
+        $failed = $true
+    }
+
+    # TLS 1.0 check (deprecated)
+    if ($tls10 -and $tls10.Enabled -eq 1) {
+        $findings += "TLS 1.0 ENABLED (deprecated)"
+        $failed = $true
+    }
+
+    # TLS 1.1 check (deprecated)
+    if ($tls11 -and $tls11.Enabled -eq 1) {
+        $findings += "TLS 1.1 ENABLED (deprecated)"
+        $failed = $true
+    }
+
+    if ($failed) {
+        Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
+            -Status "FAIL" -Finding ($findings -join "; ") `
+            -Recommendation "Disable legacy protocols via registry or IISCrypto tool" `
+            -IEC62443 "FR5" -NIS2 "Art.21(h)"
+    }
+    elseif ($findings.Count -eq 0) {
+        Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
+            -Status "PASS" -Finding "No legacy SSL/TLS protocols explicitly enabled" `
+            -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(h)"
+    }
+    else {
+        Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
+            -Status "WARN" -Finding "Could not fully verify TLS configuration" `
+            -Recommendation "Verify TLS 1.2+ is enforced using IISCrypto or registry" `
+            -IEC62443 "FR5" -NIS2 "Art.21(h)"
+    }
+}
+
+function Test-UACEnabled {
+    Write-Host "[NIS2] Checking User Account Control (UAC)..." -ForegroundColor Cyan
+
+    try {
+        $uac = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -ErrorAction SilentlyContinue
+
+        if ($uac) {
+            $enableLUA = $uac.EnableLUA
+            $consentPrompt = $uac.ConsentPromptBehaviorAdmin
+
+            if ($enableLUA -eq 1) {
+                if ($consentPrompt -ge 2) {
+                    Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
+                        -Status "PASS" -Finding "UAC is enabled with prompt level: $consentPrompt" `
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+                else {
+                    Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
+                        -Status "WARN" -Finding "UAC enabled but prompt level is low ($consentPrompt)" `
+                        -Recommendation "Increase UAC prompt level to at least 2" `
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+            }
+            else {
+                Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
+                    -Status "FAIL" -Finding "UAC is DISABLED - critical security control missing" `
+                    -Recommendation "Enable UAC: Set EnableLUA to 1 in registry" `
+                    -IEC62443 "FR1" -NIS2 "Art.21(i)"
+            }
+        }
+        else {
+            Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
+                -Status "INFO" -Finding "Could not read UAC settings" `
+                -Recommendation "Verify UAC is enabled manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
+            -Status "INFO" -Finding "Could not check UAC status" `
+            -Recommendation "Verify UAC settings manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+    }
+}
+
+function Test-PasswordMaxAge {
+    Write-Host "[NIS2] Checking Password Maximum Age Policy..." -ForegroundColor Cyan
+
+    try {
+        $netAccounts = net accounts 2>$null
+        $maxAgeLine = $netAccounts | Where-Object { $_ -match "Maximum password age|Maksymalny okres wa" }
+
+        if ($maxAgeLine) {
+            if ($maxAgeLine -match "(\d+)") {
+                $maxAge = [int]$Matches[1]
+                if ($maxAge -le 90 -and $maxAge -gt 0) {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
+                        -Status "PASS" -Finding "Password max age: $maxAge days" `
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+                elseif ($maxAge -eq 0 -or $maxAgeLine -match "Unlimited|Nieograniczon") {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
+                        -Status "FAIL" -Finding "Password never expires (unlimited)" `
+                        -Recommendation "Set maximum password age to 90 days or less" `
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+                else {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
+                        -Status "WARN" -Finding "Password max age: $maxAge days (should be <= 90)" `
+                        -Recommendation "Reduce maximum password age to 90 days" `
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+            }
+            else {
+                Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
+                    -Status "INFO" -Finding "Could not parse password max age" `
+                    -Recommendation "Check password policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+            }
+        }
+    }
+    catch {
+        Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
+            -Status "INFO" -Finding "Could not check password policy" `
+            -Recommendation "Verify password max age manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+    }
+}
+
+function Test-PasswordHistory {
+    Write-Host "[NIS2] Checking Password History Policy..." -ForegroundColor Cyan
+
+    try {
+        $netAccounts = net accounts 2>$null
+        $historyLine = $netAccounts | Where-Object { $_ -match "password history|historia hase" }
+
+        if ($historyLine) {
+            if ($historyLine -match "(\d+)") {
+                $historyCount = [int]$Matches[1]
+                if ($historyCount -ge 5) {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
+                        -Status "PASS" -Finding "Password history remembers $historyCount passwords" `
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+                elseif ($historyCount -gt 0) {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
+                        -Status "WARN" -Finding "Password history: $historyCount (recommended: 5+)" `
+                        -Recommendation "Increase password history to at least 5" `
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+                else {
+                    Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
+                        -Status "FAIL" -Finding "Password history is disabled (0)" `
+                        -Recommendation "Enable password history: net accounts /uniquepw:5" `
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                }
+            }
+        }
+        else {
+            Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
+                -Status "INFO" -Finding "Could not check password history" `
+                -Recommendation "Verify password history policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
+            -Status "INFO" -Finding "Could not check password policy" `
+            -Recommendation "Verify password history manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+    }
+}
+
+function Test-ShadowCopy {
+    Write-Host "[NIS2] Checking Volume Shadow Copy Service..." -ForegroundColor Cyan
+
+    try {
+        $vssService = Get-Service -Name "VSS" -ErrorAction SilentlyContinue
+
+        if ($vssService) {
+            # Check if shadow copies exist
+            $shadows = Get-CimInstance Win32_ShadowCopy -ErrorAction SilentlyContinue
+
+            if ($shadows -and $shadows.Count -gt 0) {
+                Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
+                    -Status "PASS" -Finding "Shadow Copy active with $($shadows.Count) restore point(s)" `
+                    -Recommendation "N/A" -IEC62443 "FR7" -NIS2 "Art.21(c)"
+            }
+            elseif ($vssService.Status -eq "Running") {
+                Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
+                    -Status "WARN" -Finding "VSS service running but no shadow copies found" `
+                    -Recommendation "Configure scheduled shadow copies for system protection" `
+                    -IEC62443 "FR7" -NIS2 "Art.21(c)"
+            }
+            else {
+                Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
+                    -Status "WARN" -Finding "VSS service not running (StartType: $($vssService.StartType))" `
+                    -Recommendation "Enable Volume Shadow Copy for backup and recovery" `
+                    -IEC62443 "FR7" -NIS2 "Art.21(c)"
+            }
+        }
+        else {
+            Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
+                -Status "FAIL" -Finding "VSS service not found" `
+                -Recommendation "Verify Volume Shadow Copy service is installed" `
+                -IEC62443 "FR7" -NIS2 "Art.21(c)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
+            -Status "INFO" -Finding "Could not check shadow copy status" `
+            -Recommendation "Verify shadow copy configuration manually" -IEC62443 "FR7" -NIS2 "Art.21(c)"
+    }
+}
+
+function Test-SecureBoot {
+    Write-Host "[NIS2] Checking Secure Boot Status..." -ForegroundColor Cyan
+
+    try {
+        $secureBoot = Confirm-SecureBootUEFI -ErrorAction SilentlyContinue
+
+        if ($secureBoot -eq $true) {
+            Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
+                -Status "PASS" -Finding "Secure Boot is enabled (UEFI)" `
+                -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+        }
+        elseif ($secureBoot -eq $false) {
+            Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
+                -Status "WARN" -Finding "Secure Boot is disabled" `
+                -Recommendation "Enable Secure Boot in UEFI/BIOS settings" `
+                -IEC62443 "FR3" -NIS2 "Art.21(e)"
+        }
+    }
+    catch {
+        # Likely Legacy BIOS (not UEFI)
+        Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
+            -Status "INFO" -Finding "Secure Boot not available (Legacy BIOS or not supported)" `
+            -Recommendation "Consider upgrading to UEFI with Secure Boot" `
+            -IEC62443 "FR3" -NIS2 "Art.21(e)"
+    }
+}
+
+function Test-DCOMHardening {
+    Write-Host "[NIS2] Checking DCOM Security Configuration..." -ForegroundColor Cyan
+
+    try {
+        # Check if DCOM is enabled
+        $dcom = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Ole" -Name "EnableDCOM" -ErrorAction SilentlyContinue
+
+        if ($dcom) {
+            if ($dcom.EnableDCOM -eq "Y") {
+                # DCOM is enabled - check authentication level
+                $authLevel = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Ole" -Name "LegacyAuthenticationLevel" -ErrorAction SilentlyContinue
+                $impLevel = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Ole" -Name "LegacyImpersonationLevel" -ErrorAction SilentlyContinue
+
+                $authValue = if ($authLevel) { $authLevel.LegacyAuthenticationLevel } else { "Not set" }
+                $impValue = if ($impLevel) { $impLevel.LegacyImpersonationLevel } else { "Not set" }
+
+                # Auth levels: 1=None, 2=Connect, 3=Call, 4=Packet, 5=PacketIntegrity, 6=PacketPrivacy
+                if ($authValue -ge 5) {
+                    Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+                        -Status "PASS" -Finding "DCOM enabled with strong authentication (Level: $authValue)" `
+                        -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                }
+                elseif ($authValue -ge 2) {
+                    Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+                        -Status "WARN" -Finding "DCOM enabled (Auth: $authValue, Imp: $impValue) - consider hardening for OPC" `
+                        -Recommendation "Increase DCOM authentication level to PacketIntegrity (5) or higher" `
+                        -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                }
+                else {
+                    Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+                        -Status "FAIL" -Finding "DCOM enabled with weak/no authentication (Level: $authValue)" `
+                        -Recommendation "Configure DCOM authentication via dcomcnfg.exe" `
+                        -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                }
+            }
+            else {
+                Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+                    -Status "PASS" -Finding "DCOM is disabled (most secure if not needed)" `
+                    -Recommendation "N/A - verify OPC DA is not required" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+            }
+        }
+        else {
+            Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+                -Status "INFO" -Finding "Could not read DCOM configuration" `
+                -Recommendation "Verify DCOM settings via dcomcnfg.exe" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
+            -Status "INFO" -Finding "Could not check DCOM status" `
+            -Recommendation "Verify DCOM configuration manually" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+    }
+}
+
+function Test-WinCCAlarmLogging {
+    Write-Host "[WinCC] Checking WinCC Alarm/Event Logging..." -ForegroundColor Magenta
+
+    if ($script:SystemInfo.WinCCVersion -eq "Not Detected") {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
+            -Status "INFO" -Finding "WinCC not detected - skipping alarm logging check" `
+            -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(b)"
+        return
+    }
+
+    # Check if we have DB connection info
+    if ($script:SystemInfo.TagsTotal -gt 0) {
+        # We have SQL access - check alarm configuration
+        # In WinCC, alarms are typically logged if Alarm Control is configured
+        Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
+            -Status "PASS" -Finding "WinCC database accessible - verify alarm logging in WinCC Explorer" `
+            -Recommendation "Ensure Alarm Logging is configured in WinCC Alarm Settings" `
+            -IEC62443 "FR6" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
+            -Status "WARN" -Finding "Could not verify WinCC alarm logging (no database access)" `
+            -Recommendation "Manually verify alarm logging is enabled in WinCC Alarm Settings" `
+            -IEC62443 "FR6" -NIS2 "Art.21(b)"
+    }
+}
+
+function Test-WindowsDefenderRealtime {
+    Write-Host "[NIS2] Checking Windows Defender Real-time Protection..." -ForegroundColor Cyan
+
+    try {
+        $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
+
+        if ($defender) {
+            $realtime = $defender.RealTimeProtectionEnabled
+            $definitions = $defender.AntivirusSignatureLastUpdated
+            $daysSinceUpdate = if ($definitions) { (Get-Date) - $definitions | Select-Object -ExpandProperty Days } else { 999 }
+
+            if ($realtime -eq $true) {
+                if ($daysSinceUpdate -le 7) {
+                    Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
+                        -Status "PASS" -Finding "Real-time protection ON, definitions updated $daysSinceUpdate day(s) ago" `
+                        -Recommendation "N/A" -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                }
+                else {
+                    Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
+                        -Status "WARN" -Finding "Real-time ON but definitions are $daysSinceUpdate days old" `
+                        -Recommendation "Update Windows Defender definitions" `
+                        -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                }
+            }
+            else {
+                Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
+                    -Status "FAIL" -Finding "Real-time protection is DISABLED" `
+                    -Recommendation "Enable Windows Defender real-time protection" `
+                    -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+            }
+        }
+        else {
+            Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
+                -Status "INFO" -Finding "Windows Defender not available or third-party AV installed" `
+                -Recommendation "Verify antivirus real-time protection is enabled" `
+                -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+        }
+    }
+    catch {
+        Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
+            -Status "INFO" -Finding "Could not check Defender status" `
+            -Recommendation "Verify antivirus protection manually" -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+    }
+}
+
 #endregion
 
 #region Report Generation
@@ -2175,29 +2593,39 @@ Test-USBAutorun
 Test-ScreenLock
 
 Test-Antivirus
+Test-WindowsDefenderRealtime
 Test-WindowsUpdate
 Test-PowerShellExecutionPolicy
 Test-UnnecessaryServices
+Test-SecureBoot
 
 Test-BitLocker
 Test-NetworkShares
 Test-SharesWithEveryone
 Test-WindowsTelemetry
+Test-ShadowCopy
 
 Test-Firewall
 Test-RDP
 Test-OpenPorts
+Test-SMBv1Disabled
+Test-TLSConfiguration
+Test-DCOMHardening
 
 Test-EventLog
 Test-AuditPolicy
 
 Test-SystemRestore
+Test-PasswordMaxAge
+Test-PasswordHistory
+Test-UACEnabled
 
 Test-WinCCInstallation
 Test-SQLServerForWinCC
 Test-WinCCRuntimeUser
 Test-WinCCDefaultUsers
 Test-SiemensEncryptedCommunication
+Test-WinCCAlarmLogging
 
 # Generate report
 Write-Host "`n" + "=" * 60
