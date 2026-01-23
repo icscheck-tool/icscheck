@@ -78,6 +78,8 @@ The tool will:
 
 ## 📈 Sample Report
 
+![ICScheck Demo](demo.gif)
+
 After running ICScheck, you will receive:
 
 - **Compliance Score** - X% aligned with IEC 62443 / NIS2
@@ -85,6 +87,8 @@ After running ICScheck, you will receive:
 - **Risk Assessment** - Prioritized findings
 - **Remediation Steps** - How to fix each issue
 - **Export Options** - HTML report for auditors
+
+➡️ [View sample report](sample_report.html)
 
 ---
 
