@@ -9,7 +9,7 @@
     Primary target: Siemens WinCC V7/V8 stations
 
 .NOTES
-    Version:        0.3.5
+    Version:        0.4.0
     Author:         Lukasz Krzesinski
     Website:        https://icscheck.com
     GitHub:         https://github.com/icscheck-tool/icscheck
@@ -34,7 +34,7 @@ if (-not $OutputPath) {
 }
 
 #region Configuration
-$script:Version = "0.3.5"
+$script:Version = "0.4.0"
 $script:ReportDate = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $script:ComputerName = $env:COMPUTERNAME
 $script:Results = @()
@@ -101,6 +101,8 @@ $script:SystemInfo = @{
     ClientStations = @()
     # Installed drivers
     InstalledDrivers = @()
+    # Communication tree (Channel -> Unit -> Connection)
+    CommTree = @()
     # WinCC Users
     WinCCUsers = @()
     WinCCUserCount = 0
@@ -123,14 +125,31 @@ function Get-SystemInfo {
     $script:SystemInfo.IPAddresses = $ips
 
     # WinCC Detection
-    $winccV7 = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
+    $winccSetup = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
+    $winccV8 = Get-ItemProperty "HKLM:\SOFTWARE\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
     $winccTIA = Get-ItemProperty "HKLM:\SOFTWARE\Siemens\Automation\WinCC RT Advanced" -ErrorAction SilentlyContinue
     $tiaPortal = Get-ItemProperty "HKLM:\SOFTWARE\Siemens\Automation\Openness\*" -ErrorAction SilentlyContinue
 
-    if ($winccV7) {
-        $script:SystemInfo.WinCCVersion = "WinCC V7 - $($winccV7.Version)"
+    # Check WinCC Professional (V7 or V8)
+    $winccPro = $winccSetup
+    if (-not $winccPro) { $winccPro = $winccV8 }
 
-        # Detect Station Type for WinCC V7
+    if ($winccPro) {
+        $version = $winccPro.Version
+        $buildNr = $winccPro.BuildNr
+
+        # BuildNr is more reliable for V8 detection (V08.xx = WinCC V8)
+        if ($buildNr -match "^V08") {
+            $script:SystemInfo.WinCCVersion = "WinCC V8 - $version (Build: $buildNr)"
+        } elseif ($buildNr -match "^V07" -or $version -match "^V?7\.") {
+            $script:SystemInfo.WinCCVersion = "WinCC V7 - $version"
+        } elseif ($version -match "^8\.") {
+            $script:SystemInfo.WinCCVersion = "WinCC V8 - $version"
+        } else {
+            $script:SystemInfo.WinCCVersion = "WinCC - $version"
+        }
+
+        # Detect Station Type for WinCC Professional (V7/V8)
         $winccServer = Get-Service -Name "WinCC_Server*" -ErrorAction SilentlyContinue
         $ccAgent = Get-Service -Name "CCAgent" -ErrorAction SilentlyContinue
         $sqlService = Get-Service -Name "MSSQL`$WINCC*" -ErrorAction SilentlyContinue
@@ -290,10 +309,9 @@ function Get-SystemInfo {
                     $script:SystemInfo.Protocols = $protocols
                 }
 
-                # Get archived tags count from Runtime database (ends with 'R')
-                $runtimeDbName = $dbName + "R"
-                $archiveQuery = "SELECT COUNT(*) AS ArchiveCount FROM Archive"
-                $archiveResult = Invoke-Sqlcmd -ServerInstance $sqlInstance -Database $runtimeDbName -Query $archiveQuery -ErrorAction SilentlyContinue
+                # Get archived tags count from PDE#TAGs (ARCTYP > 0 means tag is archived)
+                $archiveQuery = "SELECT COUNT(*) AS ArchiveCount FROM [PDE#TAGs] WHERE ARCTYP > 0"
+                $archiveResult = Invoke-Sqlcmd -ServerInstance $sqlInstance -Database $dbName -Query $archiveQuery -ErrorAction SilentlyContinue
                 if ($archiveResult) {
                     $script:SystemInfo.ArchivedTags = $archiveResult.ArchiveCount
                 }
@@ -303,6 +321,110 @@ function Get-SystemInfo {
                 $channelResult = Invoke-Sqlcmd -ServerInstance $sqlInstance -Database $dbName -Query $channelQuery -ErrorAction SilentlyContinue
                 if ($channelResult) {
                     $script:SystemInfo.InstalledDrivers = @($channelResult | ForEach-Object { $_.CHANNELDLLNAME })
+
+                    # Derive protocols and ports from driver names
+                    $protocols = @()
+                    foreach ($driver in $script:SystemInfo.InstalledDrivers) {
+                        switch -Wildcard ($driver) {
+                            "*S7-1200*" { if ("S7 (TCP 102)" -notin $protocols) { $protocols += "S7 (TCP 102)" } }
+                            "*S7-1500*" { if ("S7 (TCP 102)" -notin $protocols) { $protocols += "S7 (TCP 102)" } }
+                            "*S7 Protocol*" { if ("S7 (TCP 102)" -notin $protocols) { $protocols += "S7 (TCP 102)" } }
+                            "*Allen Bradley*" { if ("EtherNet/IP (TCP 44818)" -notin $protocols) { $protocols += "EtherNet/IP (TCP 44818)" } }
+                            "*Modbus*TCP*" { if ("Modbus TCP (TCP 502)" -notin $protocols) { $protocols += "Modbus TCP (TCP 502)" } }
+                            "*Unified*" { if ("OPC UA (TCP 4840)" -notin $protocols) { $protocols += "OPC UA (TCP 4840)" } }
+                            "*OPC UA*" { if ("OPC UA (TCP 4840)" -notin $protocols) { $protocols += "OPC UA (TCP 4840)" } }
+                            "OPC" { if ("OPC DA (DCOM)" -notin $protocols) { $protocols += "OPC DA (DCOM)" } }
+                            "*PROFINET*" { if ("PROFINET (UDP 34962-34964)" -notin $protocols) { $protocols += "PROFINET (UDP 34962-34964)" } }
+                        }
+                    }
+                    if ($protocols.Count -gt 0) {
+                        $script:SystemInfo.Protocols = $protocols
+                    }
+                }
+
+                # Build Communication Tree (Channel -> Unit -> Connection)
+                $treeQuery = @"
+SELECT
+    c.CHANNELID,
+    c.CHANNELDLLNAME AS ChannelName,
+    u.CHANNELUNITID,
+    u.CHANNELUNITNAME AS UnitName,
+    conn.CONNECTIONNAME,
+    conn.PARAMETER
+FROM MCPTCHANNEL c
+LEFT JOIN MCPTCHANNELUNIT u ON c.CHANNELID = u.CHANNELID
+LEFT JOIN MCPTCONNECTION conn ON u.CHANNELUNITID = conn.CHANNELUNITID
+WHERE c.CHANNELDLLNAME NOT IN ('Interne Variable', 'Internal Variable', 'System Info')
+ORDER BY c.CHANNELID, u.CHANNELUNITID, conn.CONNECTIONID
+"@
+                $treeResult = Invoke-Sqlcmd -ServerInstance $sqlInstance -Database $dbName -Query $treeQuery -ErrorAction SilentlyContinue
+                if ($treeResult) {
+                    $commTree = @()
+                    $currentChannel = $null
+                    $currentUnit = $null
+
+                    foreach ($row in @($treeResult)) {
+                        $channelName = $row.ChannelName
+                        $unitName = $row.UnitName
+                        $connName = $row.CONNECTIONNAME
+                        $param = $row.PARAMETER
+
+                        # Extract IP and Port from PARAMETER
+                        $ipInfo = ""
+                        if ($param) {
+                            if ($param -match '(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})') {
+                                $ipInfo = $Matches[1]
+
+                                # Try to extract port from various formats
+                                $port = $null
+                                if ($param -match 'IP-Port=(\d+)') { $port = $Matches[1] }
+                                elseif ($param -match 'Port=(\d+)') { $port = $Matches[1] }
+                                elseif ($param -match '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:(\d+)') { $port = $Matches[1] }
+
+                                # If no port found, use standard port based on driver
+                                if (-not $port) {
+                                    switch -Wildcard ($channelName) {
+                                        "*S7-1200*" { $port = "102" }
+                                        "*S7-1500*" { $port = "102" }
+                                        "*Allen Bradley*" { $port = "44818" }
+                                        "*Modbus*" { $port = "502" }
+                                        "*Unified*" { $port = "4840" }
+                                    }
+                                }
+
+                                if ($port) { $ipInfo += ":$port" }
+                            }
+                        }
+
+                        # Build tree structure
+                        if ($currentChannel -ne $channelName) {
+                            if ($currentChannel) { $commTree += $currentChannelObj }
+                            $currentChannel = $channelName
+                            $currentChannelObj = @{
+                                Name = $channelName
+                                Units = @()
+                            }
+                            $currentUnit = $null
+                        }
+
+                        if ($unitName -and $currentUnit -ne $unitName) {
+                            $currentUnit = $unitName
+                            $unitObj = @{
+                                Name = $unitName
+                                Connections = @()
+                            }
+                            $currentChannelObj.Units += $unitObj
+                        }
+
+                        if ($connName -and $connName -ne 'Internal Tag') {
+                            $connDisplay = if ($ipInfo) { "$connName ($ipInfo)" } else { $connName }
+                            if ($currentChannelObj.Units.Count -gt 0) {
+                                $currentChannelObj.Units[-1].Connections += $connDisplay
+                            }
+                        }
+                    }
+                    if ($currentChannel) { $commTree += $currentChannelObj }
+                    $script:SystemInfo.CommTree = $commTree
                 }
 
                 # Get WinCC architecture info from MCPTMACHINE (Server-Client topology)
@@ -1125,17 +1247,33 @@ function Test-WinCCInstallation {
     Write-Host "`n[WinCC] Checking WinCC Installation..." -ForegroundColor Magenta
 
     # Check for WinCC V7
-    $winccV7 = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
+    $winccSetup = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
+    $winccV8Key = Get-ItemProperty "HKLM:\SOFTWARE\Siemens\WinCC\Setup" -ErrorAction SilentlyContinue
+    $winccPro = $winccSetup
+    if (-not $winccPro) { $winccPro = $winccV8Key }
 
-    # Check for WinCC V8 / TIA Portal
+    # Check for WinCC RT Advanced / TIA Portal
     $winccTIA = Get-ItemProperty "HKLM:\SOFTWARE\Siemens\Automation\WinCC RT Advanced" -ErrorAction SilentlyContinue
 
     # Check for WinCC services
     $winccServices = Get-Service | Where-Object { $_.Name -like "*WinCC*" -or $_.Name -like "*CCAgent*" }
 
-    if ($winccV7) {
+    if ($winccPro) {
+        $version = $winccPro.Version
+        $buildNr = $winccPro.BuildNr
+
+        # BuildNr is more reliable for V8 detection (V08.xx = WinCC V8)
+        if ($buildNr -match "^V08") {
+            $versionLabel = "WinCC V8 detected: $version (Build: $buildNr)"
+        } elseif ($buildNr -match "^V07" -or $version -match "^V?7\.") {
+            $versionLabel = "WinCC V7 detected: $version"
+        } elseif ($version -match "^8\.") {
+            $versionLabel = "WinCC V8 detected: $version"
+        } else {
+            $versionLabel = "WinCC detected: $version"
+        }
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Installation Detected" `
-            -Status "INFO" -Finding "WinCC V7 detected: $($winccV7.Version)" `
+            -Status "INFO" -Finding $versionLabel `
             -Recommendation "Ensure WinCC is patched to latest version" `
             -IEC62443 "FR3" -NIS2 "Art.21(e)"
     }
@@ -1368,6 +1506,43 @@ function New-HtmlReport {
 
     # Prepare IP addresses string
     $ipString = if ($script:SystemInfo.IPAddresses.Count -gt 0) { $script:SystemInfo.IPAddresses -join ", " } else { "N/A" }
+
+    # Build Communication Architecture Tree HTML
+    $commTreeHtml = ""
+    if ($script:SystemInfo.CommTree -and $script:SystemInfo.CommTree.Count -gt 0) {
+        $treeContent = ""
+
+        foreach ($channel in $script:SystemInfo.CommTree) {
+            # Channel (Driver)
+            $treeContent += "<div class='tree-channel'>"
+            $treeContent += "<div class='tree-node channel'>&#x1F4E1; $($channel.Name)</div>"
+            $treeContent += "<div class='tree-children'>"
+
+            foreach ($unit in $channel.Units) {
+                # Unit
+                $treeContent += "<div class='tree-unit'>"
+                $treeContent += "<div class='tree-node unit'>&#x1F4E6; $($unit.Name)</div>"
+                $treeContent += "<div class='tree-children'>"
+
+                foreach ($conn in $unit.Connections) {
+                    # Connection
+                    $treeContent += "<div class='tree-node connection'>&#x1F517; $conn</div>"
+                }
+
+                $treeContent += "</div></div>"  # Close unit children and unit
+            }
+
+            $treeContent += "</div></div>"  # Close channel children and channel
+        }
+
+        # Build commTreeHtml using string concatenation to avoid here-string issues with CSS variables
+        $commTreeHtml = '<div class="system-info" style="margin-bottom: 24px;">'
+        $commTreeHtml += '<div style="grid-column: span 4;">'
+        $commTreeHtml += '<span class="system-info-label" style="font-size: 14px; margin-bottom: 12px; display: block;">&#x1F310; Communication Architecture</span>'
+        $commTreeHtml += '<div class="comm-tree">'
+        $commTreeHtml += $treeContent
+        $commTreeHtml += '</div></div></div>'
+    }
 
     $html = @"
 <!DOCTYPE html>
@@ -1616,6 +1791,19 @@ function New-HtmlReport {
             font-size: 13px;
             margin-left: 8px;
         }
+        .comm-tree {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }
+        .comm-tree .tree-channel { margin-bottom: 8px; }
+        .comm-tree .tree-node { padding: 4px 8px; border-radius: 4px; margin: 2px 0; display: block; }
+        .comm-tree .tree-node.channel { background: var(--bg-secondary); color: var(--blue); font-weight: bold; }
+        .comm-tree .tree-node.unit { background: var(--bg-secondary); color: var(--yellow); margin-left: 20px; }
+        .comm-tree .tree-node.connection { color: var(--green); margin-left: 40px; }
+        .comm-tree .tree-children { margin-left: 12px; border-left: 2px solid var(--border); padding-left: 8px; }
         @media (max-width: 768px) {
             body { padding: 16px; }
             .theme-toggle { position: static; margin-bottom: 16px; justify-content: center; }
@@ -1696,25 +1884,9 @@ function New-HtmlReport {
                 <span class="system-info-value" style="color: var(--yellow);">$($script:SystemInfo.PLCCount)</span>
             </div>
             <div class="system-info-item">
-                <span class="system-info-label">Protocols</span>
-                <span class="system-info-value" style="color: var(--yellow);">$($script:SystemInfo.Protocols -join ', ')</span>
-            </div>
-            <div class="system-info-item">
                 <span class="system-info-label">Archived Tags</span>
                 <span class="system-info-value" style="color: var(--yellow);">$($script:SystemInfo.ArchivedTags)</span>
             </div>
-            $(if ($script:SystemInfo.InstalledDrivers.Count -gt 0) { @"
-            <div class="system-info-item" style="grid-column: span 2;">
-                <span class="system-info-label">Installed Drivers</span>
-                <span class="system-info-value" style="color: var(--blue); font-size: 14px;">$($script:SystemInfo.InstalledDrivers -join '<br>')</span>
-            </div>
-"@ })
-            $(if ($script:SystemInfo.PLCAddresses.Count -gt 0) { @"
-            <div class="system-info-item" style="grid-column: span 2;">
-                <span class="system-info-label">PLC Addresses</span>
-                <span class="system-info-value" style="color: var(--red); font-size: 14px;">$($script:SystemInfo.PLCAddresses -join '<br>')</span>
-            </div>
-"@ })
         </div>
 "@ })
 
@@ -1751,6 +1923,8 @@ function New-HtmlReport {
             </div>
         </div>
 "@ })
+
+        $commTreeHtml
 
         <div class="summary">
             <div class="summary-card score">
