@@ -131,6 +131,8 @@ Contributions are welcome!
 
 🌐 [icscheck.com](https://icscheck.com)
 
+💼 [LinkedIn](https://www.linkedin.com/in/lukaszkrzesinski/)
+
 ---
 
 ## ⭐ Support the Project
