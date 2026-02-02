@@ -41,6 +41,7 @@ $script:Results = @()
 $script:PassCount = 0
 $script:FailCount = 0
 $script:WarnCount = 0
+$script:NACount = 0
 $script:TargetSecurityLevel = "SL-2"  # Default: SL-2 (most common for SCADA)
 
 # Category descriptions for report headers
@@ -668,16 +669,50 @@ ORDER BY c.CHANNELID, u.CHANNELUNITID, conn.CONNECTIONID
 #endregion
 
 #region Helper Functions
+
+# Security Level numeric mapping for comparison
+$script:SLNumeric = @{
+    "SL-1" = 1
+    "SL-2" = 2
+    "SL-3" = 3
+    "SL-4" = 4
+}
+
 function Write-CheckResult {
     param(
         [string]$Category,
         [string]$CheckName,
-        [string]$Status,  # PASS, FAIL, WARN, INFO
+        [string]$Status,  # PASS, FAIL, WARN, INFO, SKIP
         [string]$Finding,
         [string]$Recommendation,
         [string]$IEC62443,  # FR1-FR7
-        [string]$NIS2       # Article 21 reference
+        [string]$NIS2,      # Article 21 reference
+        [string]$MinSL = "SL-1"  # Minimum Security Level required for this check
     )
+
+    # Get numeric values for comparison
+    $targetSLNum = $script:SLNumeric[$script:TargetSecurityLevel]
+    $minSLNum = $script:SLNumeric[$MinSL]
+
+    # If check requires higher SL than target, mark as N/A (not applicable)
+    if ($minSLNum -gt $targetSLNum) {
+        $result = [PSCustomObject]@{
+            Category       = $Category
+            CheckName      = $CheckName
+            Status         = "N/A"
+            Finding        = "Not required for $($script:TargetSecurityLevel) (requires $MinSL+)"
+            Recommendation = "N/A"
+            IEC62443       = $IEC62443
+            NIS2           = $NIS2
+            MinSL          = $MinSL
+        }
+        $script:Results += $result
+        $script:NACount++
+        Write-Host "[N/A] " -ForegroundColor DarkGray -NoNewline
+        Write-Host "$CheckName " -ForegroundColor DarkGray -NoNewline
+        Write-Host "(requires $MinSL)" -ForegroundColor DarkGray
+        return
+    }
 
     $result = [PSCustomObject]@{
         Category       = $Category
@@ -687,6 +722,7 @@ function Write-CheckResult {
         Recommendation = $Recommendation
         IEC62443       = $IEC62443
         NIS2           = $NIS2
+        MinSL          = $MinSL
     }
 
     $script:Results += $result
@@ -728,12 +764,12 @@ function Test-PasswordPolicy {
         if ([int]$minLength -ge 12) {
             Write-CheckResult -Category "Access Control" -CheckName "Password Length >= 12 characters" `
                 -Status "PASS" -Finding "Minimum length: $minLength characters" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         } else {
             Write-CheckResult -Category "Access Control" -CheckName "Password Length >= 12 characters" `
                 -Status "FAIL" -Finding "Minimum length: $minLength characters (should be 12+)" `
                 -Recommendation "Set MinimumPasswordLength to 12 or higher in Group Policy" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
 
         # Password complexity
@@ -741,12 +777,12 @@ function Test-PasswordPolicy {
         if ([int]$complexity -eq 1) {
             Write-CheckResult -Category "Access Control" -CheckName "Password Complexity Enabled" `
                 -Status "PASS" -Finding "Password complexity is enabled" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
         } else {
             Write-CheckResult -Category "Access Control" -CheckName "Password Complexity Enabled" `
                 -Status "FAIL" -Finding "Password complexity is disabled" `
                 -Recommendation "Enable password complexity in Group Policy" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
         }
 
         # Reversible encryption (ClearTextPassword)
@@ -754,18 +790,18 @@ function Test-PasswordPolicy {
         if ([int]$clearText -eq 0) {
             Write-CheckResult -Category "Access Control" -CheckName "Reversible Encryption Disabled" `
                 -Status "PASS" -Finding "Passwords are not stored with reversible encryption" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         } else {
             Write-CheckResult -Category "Access Control" -CheckName "Reversible Encryption Disabled" `
                 -Status "FAIL" -Finding "Passwords stored with reversible encryption (CRITICAL)" `
                 -Recommendation "Disable 'Store passwords using reversible encryption' in Group Policy" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Password Policy" `
             -Status "WARN" -Finding "Could not retrieve password policy (requires admin)" `
-            -Recommendation "Run as Administrator" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Run as Administrator" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -785,24 +821,24 @@ function Test-AccountLockout {
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
                 -Status "WARN" -Finding "Account lockout is disabled. OT CONTEXT: In OT environments, lockout can interfere with Essential Functions (IEC 62443-3-3 Clause 4.2). Evaluate if operator accounts need continuous access during emergencies." `
                 -Recommendation "Consider enabling lockout (5 attempts) for non-critical accounts. For operator accounts, evaluate risk: lockout during emergency may be worse than brute-force attack risk." `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         elseif ([int]$lockoutThreshold -le 5) {
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
                 -Status "PASS" -Finding "Lockout after $lockoutThreshold failed attempts. Verify this doesn't affect critical operator accounts." `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
                 -Status "WARN" -Finding "Lockout after $lockoutThreshold attempts (IT standard: 5). OT CONTEXT: Higher threshold may be intentional for operational continuity." `
                 -Recommendation "Evaluate based on your risk assessment. Lower threshold = better security, but may impact Essential Functions." `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
             -Status "WARN" -Finding "Could not retrieve lockout policy" `
-            -Recommendation "Check manually: net accounts" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Check manually: net accounts" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -816,12 +852,12 @@ function Test-AutoLogon {
         Write-CheckResult -Category "Access Control" -CheckName "Auto-Logon Disabled" `
             -Status "FAIL" -Finding "Auto-logon enabled for user: $($defaultUser.DefaultUserName)" `
             -Recommendation "Disable auto-logon in registry or use Autologon tool from Sysinternals" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "Access Control" -CheckName "Auto-Logon Disabled" `
             -Status "PASS" -Finding "Auto-logon is disabled" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -834,18 +870,18 @@ function Test-GuestAccount {
             Write-CheckResult -Category "Access Control" -CheckName "Guest Account Disabled" `
                 -Status "FAIL" -Finding "Guest account is enabled" `
                 -Recommendation "Disable Guest account: net user guest /active:no" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "Guest Account Disabled" `
                 -Status "PASS" -Finding "Guest account is disabled" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Guest Account Disabled" `
             -Status "INFO" -Finding "Could not check Guest account status" `
-            -Recommendation "Check manually" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Check manually" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -858,18 +894,18 @@ function Test-AdminAccountRenamed {
             Write-CheckResult -Category "Access Control" -CheckName "Administrator Account Renamed" `
                 -Status "WARN" -Finding "Default Administrator account name unchanged" `
                 -Recommendation "Rename Administrator account to non-obvious name" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "Administrator Account Renamed" `
                 -Status "PASS" -Finding "Administrator account renamed to: $($admin.Name)" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Administrator Account Renamed" `
             -Status "INFO" -Finding "Could not check Administrator account" `
-            -Recommendation "Check manually" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Check manually" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
 }
 
@@ -886,13 +922,13 @@ function Test-USBAutorun {
     if ($autorun.NoDriveTypeAutoRun -ge 255) {
         Write-CheckResult -Category "Use Control" -CheckName "USB Autorun Disabled" `
             -Status "PASS" -Finding "Autorun disabled for all drive types" `
-            -Recommendation "N/A" -IEC62443 "FR2" -NIS2 "Art.21(c)"
+            -Recommendation "N/A" -IEC62443 "FR2" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "Use Control" -CheckName "USB Autorun Disabled" `
             -Status "FAIL" -Finding "Autorun may be enabled (value: $($autorun.NoDriveTypeAutoRun))" `
             -Recommendation "Set NoDriveTypeAutoRun to 255 in Group Policy" `
-            -IEC62443 "FR2" -NIS2 "Art.21(c)"
+            -IEC62443 "FR2" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
 }
 
@@ -909,25 +945,25 @@ function Test-ScreenLock {
         if ($active.ScreenSaveActive -eq "1" -and $secure.ScreenSaverIsSecure -eq "1" -and $timeoutMinutes -le 10) {
             Write-CheckResult -Category "Use Control" -CheckName "Screen Lock <= 10 minutes" `
                 -Status "PASS" -Finding "Screen lock enabled after $timeoutMinutes minutes" `
-                -Recommendation "N/A" -IEC62443 "FR2" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR2" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         elseif ($timeoutMinutes -gt 10) {
             Write-CheckResult -Category "Use Control" -CheckName "Screen Lock <= 10 minutes" `
                 -Status "WARN" -Finding "Screen lock timeout: $timeoutMinutes minutes (recommended: 10)" `
                 -Recommendation "Set screen saver timeout to 600 seconds (10 min) with password" `
-                -IEC62443 "FR2" -NIS2 "Art.21(b)"
+                -IEC62443 "FR2" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         else {
             Write-CheckResult -Category "Use Control" -CheckName "Screen Lock <= 10 minutes" `
                 -Status "FAIL" -Finding "Screen lock not properly configured" `
                 -Recommendation "Enable password-protected screen saver with 10 min timeout" `
-                -IEC62443 "FR2" -NIS2 "Art.21(b)"
+                -IEC62443 "FR2" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Use Control" -CheckName "Screen Lock <= 10 minutes" `
             -Status "WARN" -Finding "Could not determine screen lock settings" `
-            -Recommendation "Check screen saver settings manually" -IEC62443 "FR2" -NIS2 "Art.21(b)"
+            -Recommendation "Check screen saver settings manually" -IEC62443 "FR2" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -945,7 +981,7 @@ function Test-Antivirus {
             $avNames = ($av | Select-Object -ExpandProperty displayName) -join ", "
             Write-CheckResult -Category "System Integrity" -CheckName "Antivirus Installed" `
                 -Status "PASS" -Finding "Antivirus detected: $avNames" `
-                -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
 
             # Check Windows Defender status
             $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
@@ -953,12 +989,12 @@ function Test-Antivirus {
                 if ($defenderStatus.AntivirusEnabled -and $defenderStatus.RealTimeProtectionEnabled) {
                     Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Active" `
                         -Status "PASS" -Finding "Real-time protection enabled, signatures: $($defenderStatus.AntivirusSignatureLastUpdated)" `
-                        -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                        -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
                 }
                 else {
                     Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Active" `
                         -Status "WARN" -Finding "Windows Defender not fully active" `
-                        -Recommendation "Enable real-time protection" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                        -Recommendation "Enable real-time protection" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
                 }
             }
         }
@@ -966,13 +1002,13 @@ function Test-Antivirus {
             Write-CheckResult -Category "System Integrity" -CheckName "Antivirus Installed" `
                 -Status "FAIL" -Finding "No antivirus detected" `
                 -Recommendation "Install antivirus software approved for ICS environments" `
-                -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "System Integrity" -CheckName "Antivirus Installed" `
             -Status "WARN" -Finding "Could not check antivirus status" `
-            -Recommendation "Verify antivirus manually" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -Recommendation "Verify antivirus manually" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
 }
 
@@ -991,20 +1027,20 @@ function Test-WindowsUpdate {
             if ($daysSinceUpdate.Days -le 90) {
                 Write-CheckResult -Category "System Integrity" -CheckName "Windows Update < 90 days" `
                     -Status "PASS" -Finding "Last update: $($lastUpdate.Date.ToString('yyyy-MM-dd')) ($($daysSinceUpdate.Days) days ago)" `
-                    -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                    -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
             }
             else {
                 Write-CheckResult -Category "System Integrity" -CheckName "Windows Update < 90 days" `
                     -Status "FAIL" -Finding "Last update: $($lastUpdate.Date.ToString('yyyy-MM-dd')) ($($daysSinceUpdate.Days) days ago)" `
                     -Recommendation "Apply security updates within 90-day window" `
-                    -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                    -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
             }
         }
     }
     catch {
         Write-CheckResult -Category "System Integrity" -CheckName "Windows Update < 90 days" `
             -Status "WARN" -Finding "Could not check Windows Update history" `
-            -Recommendation "Check Windows Update manually" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -Recommendation "Check Windows Update manually" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
 }
 
@@ -1016,19 +1052,19 @@ function Test-PowerShellExecutionPolicy {
     if ($policy -eq "Restricted" -or $policy -eq "AllSigned") {
         Write-CheckResult -Category "System Integrity" -CheckName "PowerShell Execution Policy" `
             -Status "PASS" -Finding "Execution policy: $policy" `
-            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
     elseif ($policy -eq "RemoteSigned") {
         Write-CheckResult -Category "System Integrity" -CheckName "PowerShell Execution Policy" `
             -Status "WARN" -Finding "Execution policy: $policy (allows local unsigned scripts)" `
             -Recommendation "Consider AllSigned for production ICS systems" `
-            -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
     else {
         Write-CheckResult -Category "System Integrity" -CheckName "PowerShell Execution Policy" `
             -Status "FAIL" -Finding "Execution policy: $policy (too permissive)" `
             -Recommendation "Set execution policy to AllSigned or RemoteSigned" `
-            -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
 }
 
@@ -1061,19 +1097,19 @@ function Test-UnnecessaryServices {
     if ($runningUnnecessary.Count -eq 0) {
         Write-CheckResult -Category "System Integrity" -CheckName "No Unnecessary Services Running" `
             -Status "PASS" -Finding "No unnecessary services detected in running state" `
-            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
     elseif ($runningUnnecessary.Count -le 3) {
         Write-CheckResult -Category "System Integrity" -CheckName "No Unnecessary Services Running" `
             -Status "WARN" -Finding "Unnecessary services running: $($runningUnnecessary -join ', ')" `
             -Recommendation "Disable unnecessary services to reduce attack surface" `
-            -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "System Integrity" -CheckName "No Unnecessary Services Running" `
             -Status "FAIL" -Finding "Multiple unnecessary services: $($runningUnnecessary -join ', ')" `
             -Recommendation "Disable telemetry, media, gaming and remote services on ICS systems" `
-            -IEC62443 "FR3" -NIS2 "Art.21(c)"
+            -IEC62443 "FR3" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
 }
 
@@ -1090,19 +1126,19 @@ function Test-BitLocker {
         if ($bitlocker.ProtectionStatus -eq "On") {
             Write-CheckResult -Category "Data Confidentiality" -CheckName "BitLocker Enabled (C:)" `
                 -Status "PASS" -Finding "BitLocker protection: ON, Encryption: $($bitlocker.EncryptionPercentage)%" `
-                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
         }
         else {
             Write-CheckResult -Category "Data Confidentiality" -CheckName "BitLocker Enabled (C:)" `
                 -Status "WARN" -Finding "BitLocker not enabled on system drive" `
                 -Recommendation "Enable BitLocker for data-at-rest protection" `
-                -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Data Confidentiality" -CheckName "BitLocker Enabled (C:)" `
             -Status "INFO" -Finding "BitLocker status could not be determined (may not be available)" `
-            -Recommendation "Verify encryption status manually" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+            -Recommendation "Verify encryption status manually" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
     }
 }
 
@@ -1115,20 +1151,20 @@ function Test-NetworkShares {
         if ($shares.Count -eq 0) {
             Write-CheckResult -Category "Data Confidentiality" -CheckName "No Unnecessary Network Shares" `
                 -Status "PASS" -Finding "No non-administrative shares found" `
-                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-1"
         }
         else {
             $shareList = ($shares | Select-Object -ExpandProperty Name) -join ", "
             Write-CheckResult -Category "Data Confidentiality" -CheckName "No Unnecessary Network Shares" `
                 -Status "WARN" -Finding "Found shares: $shareList" `
                 -Recommendation "Review and remove unnecessary network shares" `
-                -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Data Confidentiality" -CheckName "No Unnecessary Network Shares" `
             -Status "INFO" -Finding "Could not enumerate shares" `
-            -Recommendation "Check shares manually: Get-SmbShare" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+            -Recommendation "Check shares manually: Get-SmbShare" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-1"
     }
 }
 
@@ -1157,19 +1193,19 @@ function Test-SharesWithEveryone {
         if ($sharesWithEveryone.Count -eq 0) {
             Write-CheckResult -Category "Data Confidentiality" -CheckName "No Shares with Everyone Access" `
                 -Status "PASS" -Finding "No shares grant full/change access to Everyone" `
-                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
         }
         else {
             Write-CheckResult -Category "Data Confidentiality" -CheckName "No Shares with Everyone Access" `
                 -Status "FAIL" -Finding "Shares with Everyone access: $($sharesWithEveryone -join ', ')" `
                 -Recommendation "Remove Everyone permissions, use specific security groups" `
-                -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Data Confidentiality" -CheckName "No Shares with Everyone Access" `
             -Status "INFO" -Finding "Could not check share permissions" `
-            -Recommendation "Check manually: Get-SmbShareAccess" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+            -Recommendation "Check manually: Get-SmbShareAccess" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
     }
 }
 
@@ -1190,20 +1226,20 @@ function Test-Firewall {
                 Write-CheckResult -Category "Network Security" -CheckName "Firewall Enabled ($($profile.Name))" `
                     -Status "FAIL" -Finding "Windows Firewall is DISABLED for $($profile.Name) profile" `
                     -Recommendation "Enable Windows Firewall for all profiles" `
-                    -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                    -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
             }
         }
 
         if ($allEnabled) {
             Write-CheckResult -Category "Network Security" -CheckName "Windows Firewall Enabled" `
                 -Status "PASS" -Finding "Firewall enabled for all profiles (Domain, Private, Public)" `
-                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Network Security" -CheckName "Windows Firewall Enabled" `
             -Status "WARN" -Finding "Could not check firewall status" `
-            -Recommendation "Verify firewall settings manually" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -Recommendation "Verify firewall settings manually" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
 }
 
@@ -1216,19 +1252,19 @@ function Test-RDP {
     if ($rdpEnabled.fDenyTSConnections -eq 1) {
         Write-CheckResult -Category "Network Security" -CheckName "RDP Disabled or NLA Required" `
             -Status "PASS" -Finding "RDP is disabled" `
-            -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
     elseif ($nla.UserAuthentication -eq 1) {
         Write-CheckResult -Category "Network Security" -CheckName "RDP Disabled or NLA Required" `
             -Status "WARN" -Finding "RDP enabled with NLA (Network Level Authentication)" `
             -Recommendation "Consider disabling RDP if not required, or use VPN" `
-            -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
     else {
         Write-CheckResult -Category "Network Security" -CheckName "RDP Disabled or NLA Required" `
             -Status "FAIL" -Finding "RDP enabled WITHOUT NLA - high risk!" `
             -Recommendation "Enable NLA or disable RDP entirely" `
-            -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
 }
 
@@ -1261,13 +1297,13 @@ function Test-OpenPorts {
         if ($foundRisky.Count -eq 0) {
             Write-CheckResult -Category "Network Security" -CheckName "No Risky Ports Open" `
                 -Status "PASS" -Finding "No common risky ports detected in LISTENING state" `
-                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
         }
         else {
             Write-CheckResult -Category "Network Security" -CheckName "No Risky Ports Open" `
                 -Status "WARN" -Finding "Risky ports listening: $($foundRisky -join ', ')" `
                 -Recommendation "Review necessity of each open port, close if not required" `
-                -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
         }
 
         # WinCC specific ports
@@ -1283,13 +1319,13 @@ function Test-OpenPorts {
             Write-CheckResult -Category "Network Security" -CheckName "WinCC Ports Detected" `
                 -Status "INFO" -Finding "WinCC-related ports listening: $($foundWinCC -join ', ')" `
                 -Recommendation "Ensure WinCC ports are properly firewalled from untrusted networks" `
-                -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Network Security" -CheckName "Open Ports Check" `
             -Status "WARN" -Finding "Could not enumerate open ports" `
-            -Recommendation "Check manually: netstat -an" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -Recommendation "Check manually: netstat -an" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-1"
     }
 }
 
@@ -1310,26 +1346,26 @@ function Test-EventLog {
             if ($sizeMB -ge 100) {
                 Write-CheckResult -Category "Audit & Logging" -CheckName "Security Event Log Enabled" `
                     -Status "PASS" -Finding "Security log enabled, size: ${sizeMB}MB, mode: $retentionDays" `
-                    -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(g)"
+                    -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-1"
             }
             else {
                 Write-CheckResult -Category "Audit & Logging" -CheckName "Security Event Log Enabled" `
                     -Status "WARN" -Finding "Security log enabled but small (${sizeMB}MB)" `
                     -Recommendation "Increase Security log size to at least 100MB" `
-                    -IEC62443 "FR6" -NIS2 "Art.21(g)"
+                    -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-1"
             }
         }
         else {
             Write-CheckResult -Category "Audit & Logging" -CheckName "Security Event Log Enabled" `
                 -Status "FAIL" -Finding "Security event log is DISABLED" `
                 -Recommendation "Enable Security event log immediately" `
-                -IEC62443 "FR6" -NIS2 "Art.21(g)"
+                -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Audit & Logging" -CheckName "Security Event Log Enabled" `
             -Status "WARN" -Finding "Could not check event log configuration" `
-            -Recommendation "Verify event log settings manually" -IEC62443 "FR6" -NIS2 "Art.21(g)"
+            -Recommendation "Verify event log settings manually" -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-1"
     }
 }
 
@@ -1346,19 +1382,19 @@ function Test-AuditPolicy {
         if ($logonEvents) {
             Write-CheckResult -Category "Audit & Logging" -CheckName "Logon Auditing Enabled" `
                 -Status "PASS" -Finding "Logon events are being audited" `
-                -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(g)"
+                -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-2"
         }
         else {
             Write-CheckResult -Category "Audit & Logging" -CheckName "Logon Auditing Enabled" `
                 -Status "WARN" -Finding "Logon auditing may not be fully configured" `
                 -Recommendation "Enable auditing for Logon/Logoff events (Success and Failure)" `
-                -IEC62443 "FR6" -NIS2 "Art.21(g)"
+                -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Audit & Logging" -CheckName "Audit Policy" `
             -Status "WARN" -Finding "Could not retrieve audit policy (requires admin)" `
-            -Recommendation "Run as Administrator to check audit policy" -IEC62443 "FR6" -NIS2 "Art.21(g)"
+            -Recommendation "Run as Administrator to check audit policy" -IEC62443 "FR6" -NIS2 "Art.21(g)" -MinSL "SL-2"
     }
 }
 
@@ -1379,26 +1415,26 @@ function Test-SystemRestore {
             if ($daysSince -le 7) {
                 Write-CheckResult -Category "Resource Availability" -CheckName "System Restore Point < 7 days" `
                     -Status "PASS" -Finding "Latest restore point: $daysSince days ago" `
-                    -Recommendation "N/A" -IEC62443 "FR7" -NIS2 "Art.21(f)"
+                    -Recommendation "N/A" -IEC62443 "FR7" -NIS2 "Art.21(f)" -MinSL "SL-1"
             }
             else {
                 Write-CheckResult -Category "Resource Availability" -CheckName "System Restore Point < 7 days" `
                     -Status "WARN" -Finding "Latest restore point: $daysSince days ago" `
                     -Recommendation "Create regular restore points (weekly minimum)" `
-                    -IEC62443 "FR7" -NIS2 "Art.21(f)"
+                    -IEC62443 "FR7" -NIS2 "Art.21(f)" -MinSL "SL-1"
             }
         }
         else {
             Write-CheckResult -Category "Resource Availability" -CheckName "System Restore Point < 7 days" `
                 -Status "FAIL" -Finding "No restore points found" `
                 -Recommendation "Enable System Restore and create restore points regularly" `
-                -IEC62443 "FR7" -NIS2 "Art.21(f)"
+                -IEC62443 "FR7" -NIS2 "Art.21(f)" -MinSL "SL-1"
         }
     }
     catch {
         Write-CheckResult -Category "Resource Availability" -CheckName "System Restore" `
             -Status "WARN" -Finding "Could not check System Restore status" `
-            -Recommendation "Verify System Restore settings manually" -IEC62443 "FR7" -NIS2 "Art.21(f)"
+            -Recommendation "Verify System Restore settings manually" -IEC62443 "FR7" -NIS2 "Art.21(f)" -MinSL "SL-1"
     }
 }
 
@@ -1438,24 +1474,24 @@ function Test-WinCCInstallation {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Installation Detected" `
             -Status "INFO" -Finding $versionLabel `
             -Recommendation "Ensure WinCC is patched to latest version" `
-            -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
     elseif ($winccTIA) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Installation Detected" `
             -Status "INFO" -Finding "WinCC (TIA Portal) detected" `
             -Recommendation "Ensure WinCC is patched to latest version" `
-            -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
     elseif ($winccServices) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Installation Detected" `
             -Status "INFO" -Finding "WinCC services found: $($winccServices.Name -join ', ')" `
             -Recommendation "Verify WinCC version and patch status" `
-            -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Installation Detected" `
             -Status "INFO" -Finding "No WinCC installation detected - general Windows ICS checks performed" `
-            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-1"
     }
 }
 
@@ -1477,13 +1513,13 @@ function Test-SQLServerForWinCC {
                 if ($localOnly.Count -eq $sqlPorts.Count) {
                     Write-CheckResult -Category "WinCC Specific" -CheckName "SQL Server Local Only" `
                         -Status "PASS" -Finding "SQL Server ($sqlInstance) listening on localhost only" `
-                        -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                        -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "WinCC Specific" -CheckName "SQL Server Local Only" `
                         -Status "WARN" -Finding "SQL Server listening on network interfaces" `
                         -Recommendation "Configure SQL Server to listen only on localhost if remote access not required" `
-                        -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                        -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
                 }
             }
         }
@@ -1492,7 +1528,7 @@ function Test-SQLServerForWinCC {
         Write-CheckResult -Category "WinCC Specific" -CheckName "SQL Server Configuration" `
             -Status "INFO" -Finding "Could not check SQL Server configuration" `
             -Recommendation "Verify SQL Server security settings manually" `
-            -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
 }
 
@@ -1514,19 +1550,19 @@ function Test-WinCCDefaultUsers {
         if ($foundDefaults.Count -eq 0) {
             Write-CheckResult -Category "WinCC Specific" -CheckName "No Default WinCC User Accounts" `
                 -Status "PASS" -Finding "No default user accounts found in WinCC ($($script:SystemInfo.WinCCUserCount) users configured)" `
-                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
         else {
             Write-CheckResult -Category "WinCC Specific" -CheckName "No Default WinCC User Accounts" `
                 -Status "WARN" -Finding "Default accounts found: $($foundDefaults -join ', ')" `
                 -Recommendation "Rename or disable default accounts, use unique usernames" `
-                -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
         }
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "No Default WinCC User Accounts" `
             -Status "INFO" -Finding "Could not retrieve WinCC user list" `
-            -Recommendation "Verify WinCC user accounts manually" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Verify WinCC user accounts manually" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -1549,24 +1585,24 @@ function Test-WinCCRuntimeUser {
                 Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Runtime Non-Admin User" `
                     -Status "FAIL" -Finding "WinCC Runtime running as administrator: $userName" `
                     -Recommendation "Configure WinCC to run with a dedicated non-admin service account" `
-                    -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                    -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
             }
             else {
                 Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Runtime Non-Admin User" `
                     -Status "PASS" -Finding "WinCC Runtime running as non-admin user: $userName" `
-                    -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                    -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Runtime Non-Admin User" `
                 -Status "INFO" -Finding "WinCC Runtime (pdlrt.exe) not currently running" `
-                -Recommendation "Verify runtime user when WinCC is active" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+                -Recommendation "Verify runtime user when WinCC is active" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Runtime Non-Admin User" `
             -Status "INFO" -Finding "Could not determine WinCC Runtime user" `
-            -Recommendation "Check manually when WinCC Runtime is active" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "Check manually when WinCC Runtime is active" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
 }
 
@@ -1582,26 +1618,26 @@ function Test-SiemensEncryptedCommunication {
             if ($level -ge 1) {
                 Write-CheckResult -Category "WinCC Specific" -CheckName "Siemens Encrypted Communication" `
                     -Status "PASS" -Finding "Encrypted communication enabled (Security Level: $level)" `
-                    -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                    -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
             }
             else {
                 Write-CheckResult -Category "WinCC Specific" -CheckName "Siemens Encrypted Communication" `
                     -Status "FAIL" -Finding "Encrypted communication disabled (Security Level: 0)" `
                     -Recommendation "Enable encrypted communication in Siemens Security Controller" `
-                    -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                    -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "WinCC Specific" -CheckName "Siemens Encrypted Communication" `
                 -Status "INFO" -Finding "Siemens Security configuration not found" `
                 -Recommendation "Configure Siemens Security Controller if available" `
-                -IEC62443 "FR5" -NIS2 "Art.21(c)"
+                -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Siemens Encrypted Communication" `
             -Status "INFO" -Finding "Could not check Siemens security settings" `
-            -Recommendation "Verify Siemens security configuration manually" -IEC62443 "FR5" -NIS2 "Art.21(c)"
+            -Recommendation "Verify Siemens security configuration manually" -IEC62443 "FR5" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
 }
 
@@ -1620,19 +1656,19 @@ function Test-WindowsTelemetry {
             if ($level -eq 0) {
                 Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
                     -Status "PASS" -Finding "Telemetry level: $levelName" `
-                    -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                    -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
             }
             elseif ($level -eq 1) {
                 Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
                     -Status "WARN" -Finding "Telemetry level: $levelName (consider Security level for ICS)" `
                     -Recommendation "Set AllowTelemetry to 0 (Security) in Group Policy" `
-                    -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                    -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
             }
             else {
                 Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
                     -Status "FAIL" -Finding "Telemetry level: $levelName (too permissive for ICS)" `
                     -Recommendation "Disable telemetry: Set AllowTelemetry to 0 in Group Policy" `
-                    -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                    -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
             }
         }
         else {
@@ -1641,20 +1677,20 @@ function Test-WindowsTelemetry {
             if ($diagTrack -and $diagTrack.StartType -eq "Disabled") {
                 Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
                     -Status "PASS" -Finding "DiagTrack service is disabled" `
-                    -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                    -Recommendation "N/A" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
             }
             else {
                 Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
                     -Status "WARN" -Finding "Telemetry policy not configured via Group Policy" `
                     -Recommendation "Configure telemetry settings in Group Policy for ICS systems" `
-                    -IEC62443 "FR4" -NIS2 "Art.21(d)"
+                    -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
             }
         }
     }
     catch {
         Write-CheckResult -Category "Data Confidentiality" -CheckName "Windows Telemetry Disabled" `
             -Status "INFO" -Finding "Could not check telemetry settings" `
-            -Recommendation "Verify telemetry configuration manually" -IEC62443 "FR4" -NIS2 "Art.21(d)"
+            -Recommendation "Verify telemetry configuration manually" -IEC62443 "FR4" -NIS2 "Art.21(d)" -MinSL "SL-2"
     }
 }
 
@@ -1679,19 +1715,19 @@ function Test-SMBv1Disabled {
         if ($smbv1Disabled) {
             Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
                 -Status "PASS" -Finding "SMBv1 is disabled (vulnerable protocol removed)" `
-                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
         else {
             Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
                 -Status "FAIL" -Finding "SMBv1 is ENABLED - vulnerable to EternalBlue/WannaCry" `
                 -Recommendation "Disable SMBv1: Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol" `
-                -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Network Security" -CheckName "SMBv1 Protocol Disabled" `
             -Status "INFO" -Finding "Could not check SMBv1 status" `
-            -Recommendation "Manually verify SMBv1 is disabled" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+            -Recommendation "Manually verify SMBv1 is disabled" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
     }
 }
 
@@ -1739,18 +1775,18 @@ function Test-TLSConfiguration {
         Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
             -Status "FAIL" -Finding ($findings -join "; ") `
             -Recommendation "Disable legacy protocols via registry or IISCrypto tool" `
-            -IEC62443 "FR5" -NIS2 "Art.21(h)"
+            -IEC62443 "FR5" -NIS2 "Art.21(h)" -MinSL "SL-2"
     }
     elseif ($findings.Count -eq 0) {
         Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
             -Status "PASS" -Finding "No legacy SSL/TLS protocols explicitly enabled" `
-            -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(h)"
+            -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(h)" -MinSL "SL-2"
     }
     else {
         Write-CheckResult -Category "Network Security" -CheckName "TLS 1.2+ Only (Legacy Protocols Disabled)" `
             -Status "WARN" -Finding "Could not fully verify TLS configuration" `
             -Recommendation "Verify TLS 1.2+ is enforced using IISCrypto or registry" `
-            -IEC62443 "FR5" -NIS2 "Art.21(h)"
+            -IEC62443 "FR5" -NIS2 "Art.21(h)" -MinSL "SL-2"
     }
 }
 
@@ -1768,32 +1804,32 @@ function Test-UACEnabled {
                 if ($consentPrompt -ge 2) {
                     Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
                         -Status "PASS" -Finding "UAC is enabled with prompt level: $consentPrompt" `
-                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
                         -Status "WARN" -Finding "UAC enabled but prompt level is low ($consentPrompt)" `
                         -Recommendation "Increase UAC prompt level to at least 2" `
-                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
             }
             else {
                 Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
                     -Status "FAIL" -Finding "UAC is DISABLED - critical security control missing" `
                     -Recommendation "Enable UAC: Set EnableLUA to 1 in registry" `
-                    -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                    -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
                 -Status "INFO" -Finding "Could not read UAC settings" `
-                -Recommendation "Verify UAC is enabled manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                -Recommendation "Verify UAC is enabled manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "UAC Enabled and Configured" `
             -Status "INFO" -Finding "Could not check UAC status" `
-            -Recommendation "Verify UAC settings manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+            -Recommendation "Verify UAC settings manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
     }
 }
 
@@ -1810,32 +1846,32 @@ function Test-PasswordMaxAge {
                 if ($maxAge -le 90 -and $maxAge -gt 0) {
                     Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
                         -Status "PASS" -Finding "Password max age: $maxAge days" `
-                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
                 elseif ($maxAge -eq 0 -or $maxAgeLine -match "Unlimited|Nieograniczon") {
                     Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
                         -Status "FAIL" -Finding "Password never expires (unlimited)" `
                         -Recommendation "Set maximum password age to 90 days or less" `
-                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
                         -Status "WARN" -Finding "Password max age: $maxAge days (should be <= 90)" `
                         -Recommendation "Reduce maximum password age to 90 days" `
-                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
             }
             else {
                 Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
                     -Status "INFO" -Finding "Could not parse password max age" `
-                    -Recommendation "Check password policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                    -Recommendation "Check password policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
             }
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Password Maximum Age <= 90 days" `
             -Status "INFO" -Finding "Could not check password policy" `
-            -Recommendation "Verify password max age manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+            -Recommendation "Verify password max age manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
     }
 }
 
@@ -1852,32 +1888,32 @@ function Test-PasswordHistory {
                 if ($historyCount -ge 5) {
                     Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
                         -Status "PASS" -Finding "Password history remembers $historyCount passwords" `
-                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
                 elseif ($historyCount -gt 0) {
                     Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
                         -Status "WARN" -Finding "Password history: $historyCount (recommended: 5+)" `
                         -Recommendation "Increase password history to at least 5" `
-                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
                         -Status "FAIL" -Finding "Password history is disabled (0)" `
                         -Recommendation "Enable password history: net accounts /uniquepw:5" `
-                        -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                        -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
                 }
             }
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
                 -Status "INFO" -Finding "Could not check password history" `
-                -Recommendation "Verify password history policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+                -Recommendation "Verify password history policy manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Access Control" -CheckName "Password History >= 5" `
             -Status "INFO" -Finding "Could not check password policy" `
-            -Recommendation "Verify password history manually" -IEC62443 "FR1" -NIS2 "Art.21(i)"
+            -Recommendation "Verify password history manually" -IEC62443 "FR1" -NIS2 "Art.21(i)" -MinSL "SL-2"
     }
 }
 
@@ -1894,32 +1930,32 @@ function Test-ShadowCopy {
             if ($shadows -and $shadows.Count -gt 0) {
                 Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
                     -Status "PASS" -Finding "Shadow Copy active with $($shadows.Count) restore point(s)" `
-                    -Recommendation "N/A" -IEC62443 "FR7" -NIS2 "Art.21(c)"
+                    -Recommendation "N/A" -IEC62443 "FR7" -NIS2 "Art.21(c)" -MinSL "SL-2"
             }
             elseif ($vssService.Status -eq "Running") {
                 Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
                     -Status "WARN" -Finding "VSS service running but no shadow copies found" `
                     -Recommendation "Configure scheduled shadow copies for system protection" `
-                    -IEC62443 "FR7" -NIS2 "Art.21(c)"
+                    -IEC62443 "FR7" -NIS2 "Art.21(c)" -MinSL "SL-2"
             }
             else {
                 Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
                     -Status "WARN" -Finding "VSS service not running (StartType: $($vssService.StartType))" `
                     -Recommendation "Enable Volume Shadow Copy for backup and recovery" `
-                    -IEC62443 "FR7" -NIS2 "Art.21(c)"
+                    -IEC62443 "FR7" -NIS2 "Art.21(c)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
                 -Status "FAIL" -Finding "VSS service not found" `
                 -Recommendation "Verify Volume Shadow Copy service is installed" `
-                -IEC62443 "FR7" -NIS2 "Art.21(c)"
+                -IEC62443 "FR7" -NIS2 "Art.21(c)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "System Integrity" -CheckName "Volume Shadow Copy Configured" `
             -Status "INFO" -Finding "Could not check shadow copy status" `
-            -Recommendation "Verify shadow copy configuration manually" -IEC62443 "FR7" -NIS2 "Art.21(c)"
+            -Recommendation "Verify shadow copy configuration manually" -IEC62443 "FR7" -NIS2 "Art.21(c)" -MinSL "SL-2"
     }
 }
 
@@ -1932,13 +1968,13 @@ function Test-SecureBoot {
         if ($secureBoot -eq $true) {
             Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
                 -Status "PASS" -Finding "Secure Boot is enabled (UEFI)" `
-                -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                -Recommendation "N/A" -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
         elseif ($secureBoot -eq $false) {
             Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
                 -Status "WARN" -Finding "Secure Boot is disabled" `
                 -Recommendation "Enable Secure Boot in UEFI/BIOS settings" `
-                -IEC62443 "FR3" -NIS2 "Art.21(e)"
+                -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
     }
     catch {
@@ -1946,7 +1982,7 @@ function Test-SecureBoot {
         Write-CheckResult -Category "System Integrity" -CheckName "Secure Boot Enabled" `
             -Status "INFO" -Finding "Secure Boot not available (Legacy BIOS or not supported)" `
             -Recommendation "Consider upgrading to UEFI with Secure Boot" `
-            -IEC62443 "FR3" -NIS2 "Art.21(e)"
+            -IEC62443 "FR3" -NIS2 "Art.21(e)" -MinSL "SL-2"
     }
 }
 
@@ -1970,37 +2006,37 @@ function Test-DCOMHardening {
                 if ($authValue -ge 5) {
                     Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
                         -Status "PASS" -Finding "DCOM enabled with strong authentication (Level: $authValue)" `
-                        -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                        -Recommendation "N/A" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
                 }
                 elseif ($authValue -ge 2) {
                     Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
                         -Status "WARN" -Finding "DCOM enabled (Auth: $authValue, Imp: $impValue) - consider hardening for OPC" `
                         -Recommendation "Increase DCOM authentication level to PacketIntegrity (5) or higher" `
-                        -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                        -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
                         -Status "FAIL" -Finding "DCOM enabled with weak/no authentication (Level: $authValue)" `
                         -Recommendation "Configure DCOM authentication via dcomcnfg.exe" `
-                        -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                        -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
                 }
             }
             else {
                 Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
                     -Status "PASS" -Finding "DCOM is disabled (most secure if not needed)" `
-                    -Recommendation "N/A - verify OPC DA is not required" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                    -Recommendation "N/A - verify OPC DA is not required" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
                 -Status "INFO" -Finding "Could not read DCOM configuration" `
-                -Recommendation "Verify DCOM settings via dcomcnfg.exe" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+                -Recommendation "Verify DCOM settings via dcomcnfg.exe" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "Network Security" -CheckName "DCOM Security Hardened" `
             -Status "INFO" -Finding "Could not check DCOM status" `
-            -Recommendation "Verify DCOM configuration manually" -IEC62443 "FR5" -NIS2 "Art.21(e)"
+            -Recommendation "Verify DCOM configuration manually" -IEC62443 "FR5" -NIS2 "Art.21(e)" -MinSL "SL-2"
     }
 }
 
@@ -2010,7 +2046,7 @@ function Test-WinCCAlarmLogging {
     if ($script:SystemInfo.WinCCVersion -eq "Not Detected") {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
             -Status "INFO" -Finding "WinCC not detected - skipping alarm logging check" `
-            -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR6" -NIS2 "Art.21(b)" -MinSL "SL-1"
         return
     }
 
@@ -2021,13 +2057,13 @@ function Test-WinCCAlarmLogging {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
             -Status "PASS" -Finding "WinCC database accessible - verify alarm logging in WinCC Explorer" `
             -Recommendation "Ensure Alarm Logging is configured in WinCC Alarm Settings" `
-            -IEC62443 "FR6" -NIS2 "Art.21(b)"
+            -IEC62443 "FR6" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "WinCC Alarm Logging Enabled" `
             -Status "WARN" -Finding "Could not verify WinCC alarm logging (no database access)" `
             -Recommendation "Manually verify alarm logging is enabled in WinCC Alarm Settings" `
-            -IEC62443 "FR6" -NIS2 "Art.21(b)"
+            -IEC62443 "FR6" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 }
 
@@ -2043,19 +2079,19 @@ function Test-WinCCUnifiedSecurity {
     if ($minLen -ge 10) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
             -Status "PASS" -Finding "Password minimum length: $minLen characters" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     elseif ($minLen -ge 8) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
             -Status "WARN" -Finding "Password minimum length: $minLen characters (recommended: 10+)" `
             -Recommendation "Increase minimum password length to at least 10 characters" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
             -Status "FAIL" -Finding "Password minimum length: $minLen characters (too short)" `
             -Recommendation "Increase minimum password length to at least 10 characters" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 
     # Check 2: Password Complexity (at least 3 of 4 character types required)
@@ -2068,19 +2104,19 @@ function Test-WinCCUnifiedSecurity {
     if ($complexityCount -ge 3) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
             -Status "PASS" -Finding "Password complexity enabled ($complexityCount/4 character types required)" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
     elseif ($complexityCount -ge 2) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
             -Status "WARN" -Finding "Password complexity: $complexityCount/4 character types required" `
             -Recommendation "Enable at least 3 character type requirements (upper, lower, digit, special)" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
             -Status "FAIL" -Finding "Password complexity too weak ($complexityCount/4 character types)" `
             -Recommendation "Enable at least 3 character type requirements (upper, lower, digit, special)" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
 
     # Check 3: Account Lockout (maxLoginErrors should be > 0)
@@ -2088,19 +2124,19 @@ function Test-WinCCUnifiedSecurity {
     if ($maxErrors -gt 0 -and $maxErrors -le 5) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
             -Status "PASS" -Finding "Account lockout after $maxErrors failed attempts" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     elseif ($maxErrors -gt 5) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
             -Status "WARN" -Finding "Account lockout after $maxErrors failed attempts (consider lowering)" `
             -Recommendation "Set account lockout to 3-5 failed attempts" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
             -Status "FAIL" -Finding "Account lockout disabled (no limit on failed login attempts)" `
             -Recommendation "Enable account lockout after 3-5 failed attempts" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 
     # Check 4: Default User Accounts in Unified
@@ -2110,13 +2146,13 @@ function Test-WinCCUnifiedSecurity {
     if ($foundDefaults.Count -eq 0) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified No Default Accounts" `
             -Status "PASS" -Finding "No default accounts found ($($script:SystemInfo.UnifiedUsers.Count) users configured)" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified No Default Accounts" `
             -Status "WARN" -Finding "Default accounts found: $($foundDefaults -join ', ')" `
             -Recommendation "Rename or disable default accounts, use unique usernames" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-1"
     }
 
     # Check 5: Number of Admin-level groups
@@ -2124,13 +2160,13 @@ function Test-WinCCUnifiedSecurity {
     if ($adminGroups.Count -le 2) {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Admin Groups Limited" `
             -Status "PASS" -Finding "$($adminGroups.Count) admin-level groups configured" `
-            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
     else {
         Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Admin Groups Limited" `
             -Status "WARN" -Finding "$($adminGroups.Count) admin-level groups: $($adminGroups -join ', ')" `
             -Recommendation "Review and consolidate admin-level groups" `
-            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+            -IEC62443 "FR1" -NIS2 "Art.21(b)" -MinSL "SL-2"
     }
 }
 
@@ -2149,33 +2185,33 @@ function Test-WindowsDefenderRealtime {
                 if ($daysSinceUpdate -le 7) {
                     Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
                         -Status "PASS" -Finding "Real-time protection ON, definitions updated $daysSinceUpdate day(s) ago" `
-                        -Recommendation "N/A" -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                        -Recommendation "N/A" -IEC62443 "SR3.2" -NIS2 "Art.21(e)" -MinSL "SL-2"
                 }
                 else {
                     Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
                         -Status "WARN" -Finding "Real-time ON but definitions are $daysSinceUpdate days old" `
                         -Recommendation "Update Windows Defender definitions" `
-                        -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                        -IEC62443 "SR3.2" -NIS2 "Art.21(e)" -MinSL "SL-2"
                 }
             }
             else {
                 Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
                     -Status "FAIL" -Finding "Real-time protection is DISABLED" `
                     -Recommendation "Enable Windows Defender real-time protection" `
-                    -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                    -IEC62443 "SR3.2" -NIS2 "Art.21(e)" -MinSL "SL-2"
             }
         }
         else {
             Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
                 -Status "INFO" -Finding "Windows Defender not available or third-party AV installed" `
                 -Recommendation "Verify antivirus real-time protection is enabled" `
-                -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+                -IEC62443 "SR3.2" -NIS2 "Art.21(e)" -MinSL "SL-2"
         }
     }
     catch {
         Write-CheckResult -Category "System Integrity" -CheckName "Windows Defender Real-time Protection" `
             -Status "INFO" -Finding "Could not check Defender status" `
-            -Recommendation "Verify antivirus protection manually" -IEC62443 "SR3.2" -NIS2 "Art.21(e)"
+            -Recommendation "Verify antivirus protection manually" -IEC62443 "SR3.2" -NIS2 "Art.21(e)" -MinSL "SL-2"
     }
 }
 
@@ -2395,6 +2431,7 @@ function New-HtmlReport {
         .fail { color: var(--red); }
         .warn { color: var(--yellow); }
         .info { color: var(--blue); }
+        .na { color: #8b949e; }
         .filter-tabs {
             display: flex;
             gap: 8px;
@@ -2415,6 +2452,7 @@ function New-HtmlReport {
         .filter-tab.active { background: var(--green); border-color: var(--green); color: white; }
         .filter-tab.active-fail { background: var(--red); border-color: var(--red); color: white; }
         .filter-tab.active-warn { background: var(--yellow); border-color: var(--yellow); color: white; }
+        .filter-tab.active-na { background: #8b949e; border-color: #8b949e; color: white; }
         .filter-tab .count {
             display: inline-block;
             background: rgba(255,255,255,0.2);
@@ -2457,10 +2495,13 @@ function New-HtmlReport {
         .status.fail { background: rgba(248, 81, 73, 0.2); color: var(--red); }
         .status.warn { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
         .status.info { background: rgba(88, 166, 255, 0.2); color: var(--blue); }
+        .status.na { background: rgba(139, 148, 158, 0.2); color: #8b949e; }
         [data-theme="light"] .status.pass { background: rgba(26, 127, 55, 0.15); }
         [data-theme="light"] .status.fail { background: rgba(207, 34, 46, 0.15); }
         [data-theme="light"] .status.warn { background: rgba(154, 103, 0, 0.15); }
         [data-theme="light"] .status.info { background: rgba(9, 105, 218, 0.15); }
+        [data-theme="light"] .status.na { background: rgba(87, 96, 106, 0.15); color: #57606a; }
+        .sl-tag { background: var(--green); color: white; font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
         .category-header {
             background: var(--bg-tertiary) !important;
             padding: 16px 24px;
@@ -2685,6 +2726,10 @@ function New-HtmlReport {
                 <h2 class="warn">$script:WarnCount</h2>
                 <p>Warnings</p>
             </div>
+            <div class="summary-card">
+                <h2 class="na">$script:NACount</h2>
+                <p>N/A (SL)</p>
+            </div>
         </div>
 
         <div class="filter-tabs">
@@ -2699,6 +2744,9 @@ function New-HtmlReport {
             </button>
             <button class="filter-tab" data-filter="warn" onclick="filterResults('warn', this)">
                 Warnings<span class="count">$script:WarnCount</span>
+            </button>
+            <button class="filter-tab" data-filter="na" onclick="filterResults('na', this)">
+                N/A<span class="count">$script:NACount</span>
             </button>
         </div>
 
@@ -2723,9 +2771,11 @@ function New-HtmlReport {
             $html += "<tr class='category-row'><td colspan='4' class='category-header'>$currentCategory$descSpan</td></tr>"
         }
 
-        $statusClass = $result.Status.ToLower()
+        # Use 'na' for N/A status (avoid CSS/JS escaping issues with '/')
+        $statusClass = if ($result.Status -eq "N/A") { "na" } else { $result.Status.ToLower() }
         $frTooltip = $script:FRTooltips[$result.IEC62443]
         $nis2Tooltip = $script:NIS2Tooltips[$result.NIS2]
+        $minSLTag = if ($result.MinSL) { "<span class='sl-tag'>$($result.MinSL)</span>" } else { "" }
         $html += @"
                 <tr data-status="$statusClass">
                     <td><span class="status $statusClass">$($result.Status)</span></td>
@@ -2737,6 +2787,7 @@ function New-HtmlReport {
                     <td>
                         <span class="compliance-tag" data-tooltip="IEC 62443: $frTooltip">$($result.IEC62443)</span>
                         <span class="compliance-tag" data-tooltip="$nis2Tooltip">NIS2 $($result.NIS2)</span>
+                        $minSLTag
                     </td>
                 </tr>
 "@
@@ -2778,11 +2829,12 @@ function New-HtmlReport {
         function filterResults(filter, btn) {
             // Update active button
             document.querySelectorAll('.filter-tab').forEach(tab => {
-                tab.classList.remove('active', 'active-fail', 'active-warn');
+                tab.classList.remove('active', 'active-fail', 'active-warn', 'active-na');
             });
 
             if (filter === 'fail') btn.classList.add('active-fail');
             else if (filter === 'warn') btn.classList.add('active-warn');
+            else if (filter === 'na') btn.classList.add('active-na');
             else btn.classList.add('active');
 
             // Filter rows
@@ -2995,6 +3047,7 @@ Write-Host "  Compliance Score: " -NoNewline; Write-Host "$complianceScore%" -Fo
 Write-Host "  Passed: " -NoNewline; Write-Host $script:PassCount -ForegroundColor Green
 Write-Host "  Failed: " -NoNewline; Write-Host $script:FailCount -ForegroundColor Red
 Write-Host "  Warnings: " -NoNewline; Write-Host $script:WarnCount -ForegroundColor Yellow
+Write-Host "  N/A (below target SL): " -NoNewline; Write-Host $script:NACount -ForegroundColor Gray
 
 if (-not $SkipHtmlReport) {
     $reportPath = New-HtmlReport
