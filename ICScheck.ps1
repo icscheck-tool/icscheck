@@ -34,13 +34,14 @@ if (-not $OutputPath) {
 }
 
 #region Configuration
-$script:Version = "0.5.0"
+$script:Version = "0.6.0"
 $script:ReportDate = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $script:ComputerName = $env:COMPUTERNAME
 $script:Results = @()
 $script:PassCount = 0
 $script:FailCount = 0
 $script:WarnCount = 0
+$script:TargetSecurityLevel = "SL-2"  # Default: SL-2 (most common for SCADA)
 
 # Category descriptions for report headers
 $script:CategoryDescriptions = @{
@@ -107,13 +108,28 @@ $script:SystemInfo = @{
     WinCCUsers = @()
     WinCCUserCount = 0
     WinCCUserTree = @()
+    # WinCC Unified specific
+    WinCCUnified = $false
+    UnifiedDomain = ""
+    UnifiedPasswordPolicy = @{}
+    UnifiedUsers = @()
+    UnifiedGroups = @()
+    UnifiedUserTree = @()
+    # Siemens License Inventory
+    SiemensLicenses = @()
     ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    # IEC 62443 Security Level
+    TargetSecurityLevel = "SL-2"
+    AuditScope = "Single Workstation"
 }
 #endregion
 
 #region System Information Collection
 function Get-SystemInfo {
     Write-Host "Collecting System Information..." -ForegroundColor Cyan
+
+    # Store selected Security Level
+    $script:SystemInfo.TargetSecurityLevel = $script:TargetSecurityLevel
 
     # OS Version
     $os = Get-CimInstance Win32_OperatingSystem
@@ -179,6 +195,128 @@ function Get-SystemInfo {
         if ($winccSqlService) {
             $script:SystemInfo.WinCCVersion = "WinCC (detected via SQL)"
             $script:SystemInfo.WinCCStationType = "UNKNOWN"
+        }
+    }
+
+    # WinCC Unified Detection (separate from Classic)
+    $unifiedServices = Get-Service | Where-Object { $_.Name -like "*WinCC_Unified*" -or $_.Name -like "*TraceLogger_WinCC_Unified*" -or $_.Name -like "*CoRtHmiRTm*" }
+    if ($unifiedServices) {
+        $script:SystemInfo.WinCCUnified = $true
+
+        # Try to get Unified version from registry (version is in key name under Bundles)
+        $unifiedVersion = "WinCC Unified"
+        $bundlesPath = "HKLM:\SOFTWARE\Siemens\Automation\_InstalledSW\Global\Bundles"
+        if (Test-Path $bundlesPath) {
+            $unifiedKey = Get-ChildItem $bundlesPath -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match "WinCC Unified.*V(\d+)" } |
+                Select-Object -First 1
+            if ($unifiedKey -and $unifiedKey.Name -match "V(\d+)") {
+                $unifiedVersion = "WinCC Unified V$($Matches[1])"
+            }
+        }
+
+        if ($script:SystemInfo.WinCCVersion -eq "Not Detected") {
+            $script:SystemInfo.WinCCVersion = $unifiedVersion
+            $script:SystemInfo.WinCCStationType = "RUNTIME"
+        } else {
+            $script:SystemInfo.WinCCVersion += " + $unifiedVersion"
+        }
+
+        # Parse WinCC Unified UMC database (JSON)
+        $umcPath = "C:\ProgramData\Siemens\LocalUserManagement\data\db"
+        if (Test-Path $umcPath) {
+            $umcFiles = Get-ChildItem -Path $umcPath -Filter "umcdatabase-*" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+            if ($umcFiles) {
+                try {
+                    $umcContent = Get-Content -Path $umcFiles[0].FullName -Raw -ErrorAction SilentlyContinue
+                    $umcData = $umcContent | ConvertFrom-Json
+
+                    $script:SystemInfo.UnifiedDomain = $umcData.domainName
+
+                    # Password policy
+                    if ($umcData.globalAccountPolicies) {
+                        $script:SystemInfo.UnifiedPasswordPolicy = @{
+                            MinLength = $umcData.globalAccountPolicies.passwordMinLength
+                            MinUpperCase = $umcData.globalAccountPolicies.passwordMinUpperChar
+                            MinLowerCase = $umcData.globalAccountPolicies.passwordMinLowerChar
+                            MinDigits = $umcData.globalAccountPolicies.passwordMinDigit
+                            MinSpecial = $umcData.globalAccountPolicies.passwordMinSpecialChar
+                            MaxLoginErrors = $umcData.globalAccountPolicies.maxLoginErrors
+                        }
+                    }
+
+                    # Users and groups
+                    if ($umcData.users) {
+                        $script:SystemInfo.UnifiedUsers = @($umcData.users | ForEach-Object { $_.name })
+                        $script:SystemInfo.WinCCUserCount = $script:SystemInfo.UnifiedUsers.Count
+                        $script:SystemInfo.WinCCUsers = $script:SystemInfo.UnifiedUsers
+                    }
+
+                    if ($umcData.groups) {
+                        $script:SystemInfo.UnifiedGroups = @($umcData.groups | ForEach-Object { $_.name })
+
+                        # Build user tree (group -> users) - use Members to match HTML template
+                        $userTree = @()
+                        foreach ($group in $umcData.groups) {
+                            $groupMembers = @()
+                            if ($group.users) {
+                                $groupMembers = @($group.users)
+                            }
+                            $userTree += @{
+                                GroupName = $group.name
+                                Members = $groupMembers
+                            }
+                        }
+                        $script:SystemInfo.UnifiedUserTree = $userTree
+                        $script:SystemInfo.WinCCUserTree = $userTree
+                    }
+
+                    Write-Host "  [Unified] Parsed UMC database: $($script:SystemInfo.UnifiedUsers.Count) users, $($script:SystemInfo.UnifiedGroups.Count) groups" -ForegroundColor DarkGray
+                }
+                catch {
+                    Write-Host "  [Unified] Could not parse UMC database: $_" -ForegroundColor DarkYellow
+                }
+            }
+        }
+
+        # Check if Unified Runtime is running
+        $unifiedRuntime = Get-Process -Name "Siemens.Runtime.HmiUnified.Client" -ErrorAction SilentlyContinue
+        if ($unifiedRuntime) {
+            $script:SystemInfo.WinCCProject = "Running (Unified)"
+        }
+    }
+
+    # Siemens License Inventory (via Automation License Manager SQLite database)
+    $almDbPath = "C:\ProgramData\Siemens\Automation\Automation License Manager\logging\almdb.db"
+    $sqlitePaths = @(
+        "C:\Program Files\Siemens\Automation\WinCCUnified\bin\sqlite3.exe",
+        "C:\Program Files (x86)\Siemens\Automation\WinCCUnified\bin\sqlite3.exe"
+    )
+    $sqlite = $sqlitePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ((Test-Path $almDbPath) -and $sqlite) {
+        try {
+            $licenseQuery = "SELECT LicenseShortName, LicenseDisplayName, LicenseVersion FROM License;"
+            $licenseOutput = & $sqlite $almDbPath $licenseQuery 2>$null
+
+            if ($licenseOutput) {
+                $licenses = @()
+                foreach ($line in $licenseOutput) {
+                    $parts = $line -split '\|'
+                    if ($parts.Count -ge 2) {
+                        $licenses += @{
+                            ShortName = $parts[0]
+                            DisplayName = $parts[1]
+                            Version = if ($parts.Count -ge 3) { $parts[2] } else { "" }
+                        }
+                    }
+                }
+                $script:SystemInfo.SiemensLicenses = $licenses
+                Write-Host "  [ALM] Found $($licenses.Count) Siemens licenses" -ForegroundColor DarkGray
+            }
+        }
+        catch {
+            Write-Host "  [ALM] Could not read license database: $_" -ForegroundColor DarkYellow
         }
     }
 
@@ -634,24 +772,30 @@ function Test-PasswordPolicy {
 function Test-AccountLockout {
     Write-Host "[FR1] Checking Account Lockout Policy..." -ForegroundColor Cyan
 
+    # OT CONTEXT: Account lockout is complex in OT environments!
+    # Per IEC 62443-3-3 Clause 4.2: Security measures must NOT interfere with Essential Functions
+    # Locking out operator accounts during an emergency could be MORE dangerous than a brute-force attack!
+    # This is why we use WARN instead of FAIL for disabled lockout in OT environments.
+
     try {
         $lockoutThreshold = (net accounts | Select-String "Lockout threshold").ToString() -replace '\D+', ''
 
         if ($lockoutThreshold -eq "" -or $lockoutThreshold -eq "Never") {
+            # Changed from FAIL to WARN - OT context matters!
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
-                -Status "FAIL" -Finding "Account lockout is disabled" `
-                -Recommendation "Set lockout threshold to 5 attempts" `
+                -Status "WARN" -Finding "Account lockout is disabled. OT CONTEXT: In OT environments, lockout can interfere with Essential Functions (IEC 62443-3-3 Clause 4.2). Evaluate if operator accounts need continuous access during emergencies." `
+                -Recommendation "Consider enabling lockout (5 attempts) for non-critical accounts. For operator accounts, evaluate risk: lockout during emergency may be worse than brute-force attack risk." `
                 -IEC62443 "FR1" -NIS2 "Art.21(b)"
         }
         elseif ([int]$lockoutThreshold -le 5) {
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
-                -Status "PASS" -Finding "Lockout after $lockoutThreshold failed attempts" `
+                -Status "PASS" -Finding "Lockout after $lockoutThreshold failed attempts. Verify this doesn't affect critical operator accounts." `
                 -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
         }
         else {
             Write-CheckResult -Category "Access Control" -CheckName "Account Lockout Threshold" `
-                -Status "WARN" -Finding "Lockout after $lockoutThreshold attempts (recommended: 5)" `
-                -Recommendation "Consider reducing to 5 attempts" `
+                -Status "WARN" -Finding "Lockout after $lockoutThreshold attempts (IT standard: 5). OT CONTEXT: Higher threshold may be intentional for operational continuity." `
+                -Recommendation "Evaluate based on your risk assessment. Lower threshold = better security, but may impact Essential Functions." `
                 -IEC62443 "FR1" -NIS2 "Art.21(b)"
         }
     }
@@ -1887,6 +2031,109 @@ function Test-WinCCAlarmLogging {
     }
 }
 
+function Test-WinCCUnifiedSecurity {
+    Write-Host "[WinCC Unified] Checking Unified Security Configuration..." -ForegroundColor Magenta
+
+    if (-not $script:SystemInfo.WinCCUnified) {
+        return  # Skip if not Unified
+    }
+
+    # Check 1: Password Minimum Length (should be >= 8)
+    $minLen = $script:SystemInfo.UnifiedPasswordPolicy.MinLength
+    if ($minLen -ge 10) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
+            -Status "PASS" -Finding "Password minimum length: $minLen characters" `
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    elseif ($minLen -ge 8) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
+            -Status "WARN" -Finding "Password minimum length: $minLen characters (recommended: 10+)" `
+            -Recommendation "Increase minimum password length to at least 10 characters" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Min Length" `
+            -Status "FAIL" -Finding "Password minimum length: $minLen characters (too short)" `
+            -Recommendation "Increase minimum password length to at least 10 characters" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+
+    # Check 2: Password Complexity (at least 3 of 4 character types required)
+    $complexityCount = 0
+    if ($script:SystemInfo.UnifiedPasswordPolicy.MinUpperCase -ge 1) { $complexityCount++ }
+    if ($script:SystemInfo.UnifiedPasswordPolicy.MinLowerCase -ge 1) { $complexityCount++ }
+    if ($script:SystemInfo.UnifiedPasswordPolicy.MinDigits -ge 1) { $complexityCount++ }
+    if ($script:SystemInfo.UnifiedPasswordPolicy.MinSpecial -ge 1) { $complexityCount++ }
+
+    if ($complexityCount -ge 3) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
+            -Status "PASS" -Finding "Password complexity enabled ($complexityCount/4 character types required)" `
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    elseif ($complexityCount -ge 2) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
+            -Status "WARN" -Finding "Password complexity: $complexityCount/4 character types required" `
+            -Recommendation "Enable at least 3 character type requirements (upper, lower, digit, special)" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Password Complexity" `
+            -Status "FAIL" -Finding "Password complexity too weak ($complexityCount/4 character types)" `
+            -Recommendation "Enable at least 3 character type requirements (upper, lower, digit, special)" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+
+    # Check 3: Account Lockout (maxLoginErrors should be > 0)
+    $maxErrors = $script:SystemInfo.UnifiedPasswordPolicy.MaxLoginErrors
+    if ($maxErrors -gt 0 -and $maxErrors -le 5) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
+            -Status "PASS" -Finding "Account lockout after $maxErrors failed attempts" `
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    elseif ($maxErrors -gt 5) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
+            -Status "WARN" -Finding "Account lockout after $maxErrors failed attempts (consider lowering)" `
+            -Recommendation "Set account lockout to 3-5 failed attempts" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Account Lockout" `
+            -Status "FAIL" -Finding "Account lockout disabled (no limit on failed login attempts)" `
+            -Recommendation "Enable account lockout after 3-5 failed attempts" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+
+    # Check 4: Default User Accounts in Unified
+    $defaultUsers = @('Administrator', 'Admin', 'Operator', 'Observer', 'Guest', 'User', 'Default', 'Test', 'Demo')
+    $foundDefaults = @($script:SystemInfo.UnifiedUsers | Where-Object { $_ -in $defaultUsers })
+
+    if ($foundDefaults.Count -eq 0) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified No Default Accounts" `
+            -Status "PASS" -Finding "No default accounts found ($($script:SystemInfo.UnifiedUsers.Count) users configured)" `
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified No Default Accounts" `
+            -Status "WARN" -Finding "Default accounts found: $($foundDefaults -join ', ')" `
+            -Recommendation "Rename or disable default accounts, use unique usernames" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+
+    # Check 5: Number of Admin-level groups
+    $adminGroups = @($script:SystemInfo.UnifiedGroups | Where-Object { $_ -match 'Admin|Administrator|Supervisor' })
+    if ($adminGroups.Count -le 2) {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Admin Groups Limited" `
+            -Status "PASS" -Finding "$($adminGroups.Count) admin-level groups configured" `
+            -Recommendation "N/A" -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+    else {
+        Write-CheckResult -Category "WinCC Specific" -CheckName "Unified Admin Groups Limited" `
+            -Status "WARN" -Finding "$($adminGroups.Count) admin-level groups: $($adminGroups -join ', ')" `
+            -Recommendation "Review and consolidate admin-level groups" `
+            -IEC62443 "FR1" -NIS2 "Art.21(b)"
+    }
+}
+
 function Test-WindowsDefenderRealtime {
     Write-Host "[NIS2] Checking Windows Defender Real-time Protection..." -ForegroundColor Cyan
 
@@ -2009,6 +2256,22 @@ function New-HtmlReport {
         $userTreeHtml += '<div class="comm-tree">'
         $userTreeHtml += $userContent
         $userTreeHtml += '</div></div></div>'
+    }
+
+    # Build Siemens License Inventory HTML
+    $licensesHtml = ""
+    if ($script:SystemInfo.SiemensLicenses -and $script:SystemInfo.SiemensLicenses.Count -gt 0) {
+        $licenseContent = ""
+        foreach ($license in $script:SystemInfo.SiemensLicenses) {
+            $licenseContent += "<div class='tree-node user'>&#x1F4DD; $($license.DisplayName)</div>"
+        }
+
+        $licensesHtml = '<div class="system-info" style="margin-bottom: 24px;">'
+        $licensesHtml += '<div style="grid-column: span 4;">'
+        $licensesHtml += "<span class='system-info-label' style='font-size: 14px; margin-bottom: 12px; display: block;'>&#x1F4CB; Siemens License Inventory ($($script:SystemInfo.SiemensLicenses.Count) products)</span>"
+        $licensesHtml += '<div class="comm-tree">'
+        $licensesHtml += $licenseContent
+        $licensesHtml += '</div></div></div>'
     }
 
     $html = @"
@@ -2297,7 +2560,27 @@ function New-HtmlReport {
                 <span class="theme-text">Light Mode</span>
             </button>
             <h1>ICScheck Security Report</h1>
-            <p>Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | Version: $script:Version</p>
+            <p>Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | Version: $script:Version | Target: $($script:SystemInfo.TargetSecurityLevel)</p>
+        </div>
+
+        <div class="disclaimer-box" style="background: linear-gradient(135deg, rgba(210, 153, 34, 0.1), rgba(248, 81, 73, 0.1)); border: 1px solid var(--yellow); border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+            <h3 style="color: var(--yellow); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 24px;">&#x26A0;</span> Important Disclaimer
+            </h3>
+            <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.7;">
+                <p style="margin-bottom: 8px;"><strong style="color: var(--text-primary);">Audit Scope:</strong> This is a security assessment of a <strong>single workstation</strong>, NOT a complete ICS/SCADA system audit.</p>
+                <p style="margin-bottom: 8px;"><strong style="color: var(--text-primary);">IEC 62443 Note:</strong> Full compliance requires system-wide assessment including zones, conduits, and network architecture.</p>
+                <p style="margin-bottom: 8px;"><strong style="color: var(--text-primary);">No Liability:</strong> The author takes no responsibility for any consequences of running this tool or implementing its recommendations.</p>
+                <p><strong style="color: var(--text-primary);">OT Context:</strong> Some findings marked as FAIL may be acceptable in OT environments where security measures must not interfere with Essential Functions (IEC 62443-3-3, Clause 4.2).</p>
+            </div>
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+                <span style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; color: var(--text-secondary);">
+                    Target Security Level: <strong style="color: var(--green);">$($script:SystemInfo.TargetSecurityLevel)</strong>
+                </span>
+                <span style="background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; color: var(--text-secondary); margin-left: 8px;">
+                    Audit Scope: <strong style="color: var(--yellow);">Single Workstation</strong>
+                </span>
+            </div>
         </div>
 
         <div class="system-info">
@@ -2382,6 +2665,8 @@ function New-HtmlReport {
         $userTreeHtml
 
         $commTreeHtml
+
+        $licensesHtml
 
         <div class="summary">
             <div class="summary-card score">
@@ -2569,6 +2854,74 @@ Write-Host @"
 
 "@ -ForegroundColor Green
 
+# ============================================
+# DISCLAIMER AND SAFETY WARNING
+# ============================================
+Write-Host @"
+============================================================
+                    IMPORTANT DISCLAIMER
+============================================================
+"@ -ForegroundColor Yellow
+
+Write-Host @"
+This tool performs READ-ONLY security checks on your system.
+It does NOT make any changes to your configuration.
+
+HOWEVER:
+- This is an audit of a SINGLE WORKSTATION, not the entire
+  ICS/SCADA system (zones, conduits, network architecture)
+- For full IEC 62443 compliance, you need system-wide assessment
+- The author takes NO RESPONSIBILITY for any consequences
+  of running this tool or acting on its recommendations
+
+RECOMMENDATION: Run first in a TEST ENVIRONMENT before
+                using on production systems.
+
+"@ -ForegroundColor Gray
+
+Write-Host "To proceed, type YES and press Enter: " -ForegroundColor Yellow -NoNewline
+$confirmation = Read-Host
+if ($confirmation -ne "YES") {
+    Write-Host "`nAudit cancelled. Exiting." -ForegroundColor Red
+    exit 0
+}
+Write-Host ""
+
+# ============================================
+# SECURITY LEVEL SELECTION (IEC 62443)
+# ============================================
+Write-Host @"
+============================================================
+         SELECT TARGET SECURITY LEVEL (IEC 62443)
+============================================================
+IEC 62443 defines 4 Security Levels (SL). Choose your target:
+
+  [1] SL-1: Protection against casual or coincidental violation
+            (Basic security for low-risk environments)
+
+  [2] SL-2: Protection against intentional violation using
+            simple means (RECOMMENDED for most SCADA systems)
+
+  [3] SL-3: Protection against sophisticated attacks with
+            moderate resources (Critical infrastructure)
+
+  [4] SL-4: Protection against state-sponsored attacks
+            (Highest security, specialized environments)
+
+"@ -ForegroundColor Cyan
+
+Write-Host "Enter Security Level [1-4] (default: 2): " -ForegroundColor Yellow -NoNewline
+$slChoice = Read-Host
+switch ($slChoice) {
+    "1" { $script:TargetSecurityLevel = "SL-1" }
+    "3" { $script:TargetSecurityLevel = "SL-3" }
+    "4" { $script:TargetSecurityLevel = "SL-4" }
+    default { $script:TargetSecurityLevel = "SL-2" }
+}
+Write-Host "`nTarget Security Level: " -NoNewline
+Write-Host $script:TargetSecurityLevel -ForegroundColor Green
+Write-Host ""
+
 # Check admin rights
 if (-not (Test-IsAdmin)) {
     Write-Host "WARNING: Running without Administrator privileges. Some checks may be limited." -ForegroundColor Yellow
@@ -2576,6 +2929,7 @@ if (-not (Test-IsAdmin)) {
 }
 
 Write-Host "Starting security audit of: $script:ComputerName" -ForegroundColor White
+Write-Host "Audit type: Single workstation (not full system)" -ForegroundColor Gray
 Write-Host "=" * 60
 
 # Collect system information first
@@ -2626,6 +2980,7 @@ Test-WinCCRuntimeUser
 Test-WinCCDefaultUsers
 Test-SiemensEncryptedCommunication
 Test-WinCCAlarmLogging
+Test-WinCCUnifiedSecurity
 
 # Generate report
 Write-Host "`n" + "=" * 60

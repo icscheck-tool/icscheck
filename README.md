@@ -10,6 +10,20 @@
 
 ---
 
+## ⚠️ Important Disclaimer
+
+> **READ BEFORE USE**
+
+1. **Audit Scope:** This tool audits a **single workstation**, NOT an entire ICS/SCADA system. For full IEC 62443 compliance, you need system-wide assessment including zones, conduits, and network architecture.
+
+2. **No Liability:** The author takes **NO RESPONSIBILITY** for any consequences of running this tool or implementing its recommendations. Use at your own risk.
+
+3. **Test First:** We strongly recommend running ICScheck in a **test environment** before using it on production systems.
+
+4. **OT Context:** Some findings may be flagged as FAIL but could be acceptable in OT environments where security measures must not interfere with Essential Functions (per IEC 62443-3-3, Clause 4.2).
+
+---
+
 ## 🎯 What is ICScheck?
 
 A lightweight PowerShell tool that automatically audits your SCADA/HMI/DCS workstation against **IEC 62443** and **NIS2** security requirements.
@@ -102,8 +116,13 @@ After running ICScheck, you will receive:
 - ✅ WinCC V7/V8 deep integration
 - ✅ Communication Architecture tree
 - ✅ User hierarchy visualization
+- ✅ **v0.6:** Security Level selection (SL-1 to SL-4)
+- ✅ **v0.6:** Safety confirmation prompt before execution
+- ✅ **v0.6:** Comprehensive disclaimers (scope, liability, OT context)
 
 **Coming Soon:**
+- 🔜 Full FR1-FR7 × SL1-SL4 matrix mapping
+- 🔜 OT-specific context notes for each check
 - 🔜 PDF export
 - 🔜 NIST CSF mapping
 - 🔜 Scheduled scans
